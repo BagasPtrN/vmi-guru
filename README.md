@@ -105,11 +105,10 @@ Mengikuti Manual Beery VMI (hlm. 23–29 & 93–96) dan tabel norma Lampiran C:
    **3 kegagalan berturut-turut**. Item 1–6 otomatis diberi poin bila anak berhasil di salah satu item 7–9; bila tidak,
    guru mencentang hasil tugas mencoret/meniru di halaman hasil.
 2. **Skor standar** (rata-rata 100, SD 15) dari tabel *Raw Scores to Standard Scores* per kelompok usia 2 bulan
-   (`norms_data.js`, usia 4:0–69:11; ditranskripsi dengan OCR ganda + cek visual + cek monoton).
+   (`norms_data.js`, usia 2:0–69:11; usia 2:0–3:11 dari tabel ketik ulang dengan 2 salah ketik yang diperbaiki; ditranskripsi dengan OCR ganda + cek visual + cek monoton).
 3. **Kategori** Tabel 1 manual (90–109 = rata-rata/sesuai usia), rentang ± SEM (Tabel 7),
    persentil (kurva normal, perkiraan) dan usia perkembangan (usia saat skor mentah = skor standar 100, perkiraan).
 
-Tabel untuk usia **2:0–3:11 belum tersedia** — anak di bawah 4 tahun hanya mendapat skor mentah.
 
 ## Struktur file
 ```

@@ -33,7 +33,7 @@ const SYMBOLS = [
   { mod: "three_dimensional_star", name: "Bintang tiga dimensi",  icon: "M24 4L42 34H6ZM24 44L6 14H42Z" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "10";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "11";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -701,7 +701,7 @@ function conclusionHtml(test, K) {
   let main;
   if (K.pending) main = `<p class="muted">Kesimpulan muncul setelah semua gambar selesai dinilai.</p>`;
   else if (st.error === "usia") main = `<p class="warn-box">Usia anak belum diisi, jadi skor standar belum bisa dihitung.</p>`;
-  else if (st.error === "muda") main = `<p class="warn-box">Tabel norma untuk usia di bawah 4 tahun (2:0–3:11) belum dimasukkan ke aplikasi, jadi skor standar belum tersedia. Skor mentah tetap bisa dicatat.</p>`;
+  else if (st.error === "muda") main = `<p class="warn-box">Tabel norma Beery VMI dimulai dari usia 2:0, jadi skor standar belum bisa dihitung untuk usia ini. Skor mentah tetap bisa dicatat.</p>`;
   else if (st.error === "tua") main = `<p class="warn-box">Usia di luar tabel norma (maks. 69:11).</p>`;
   else main = `
       <div class="concl-grid">
@@ -782,7 +782,7 @@ async function viewCriteria(main) {
         <li><b>Rentang ± SEM.</b> Skor sebenarnya kira-kira ±4–6 poin dari skor yang didapat (Tabel 7 manual).</li>
       </ol>
       <p class="small muted">Persentil dihitung dari kurva normal dan usia perkembangan diperkirakan dari tabel yang sama (perkiraan).
-        Tabel untuk usia 2:0–3:11 belum tersedia di aplikasi.</p>
+        Tabel mencakup usia 2:0–69:11.</p>
     </section>
     <div class="crit-docs">
       ${SYMBOLS.map((s, i) => { const C = CRITERIA[i]; return `

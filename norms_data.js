@@ -2,10 +2,23 @@
  * Sumber: Manual Beery VMI edisi 6, Lampiran C "Beery VMI Raw Scores to Standard Scores" (hlm. 184–204),
  * dari file "scoring vmi.pdf". Ditranskripsi dengan OCR ganda + pengecekan visual & pengecekan monoton.
  * Format: [usia awal (bulan), usia akhir (bulan), skor standar untuk skor mentah 0..30 (null = "•" di tabel)].
- * Usia 2:0–3:11 belum tersedia (halamannya tidak ada di file).
+ * Usia 2:0–3:11: dari tabel ketik ulang yang dikirim pengguna. Dua salah ketik diperbaiki:
+ *   2:0–2:1 skor mentah 1 tertulis "30" → 90; 3:2–3:3 skor mentah 13 tertulis "132" → 122 (urutan harus naik).
  */
 "use strict";
 const VMI_NORMS = [
+  [24, 25, [null,90,93,98,101,104,109,113,117,120,124,128,135,141,146,153,155,null,null,null,null,null,null,null,null,null,null,null,null,null,null]],
+  [26, 27, [null,88,91,95,99,102,107,111,114,117,122,126,132,138,143,150,155,null,null,null,null,null,null,null,null,null,null,null,null,null,null]],
+  [28, 29, [null,86,89,93,97,100,105,109,112,115,120,124,129,134,140,148,155,null,null,null,null,null,null,null,null,null,null,null,null,null,null]],
+  [30, 31, [null,84,87,91,95,98,103,107,110,113,118,122,126,131,137,145,154,155,null,null,null,null,null,null,null,null,null,null,null,null,null]],
+  [32, 33, [null,82,85,89,93,96,101,105,108,111,116,120,124,128,133,142,150,152,155,null,null,null,null,null,null,null,null,null,null,null,null]],
+  [34, 35, [null,80,83,86,91,94,99,103,106,109,114,118,121,126,133,140,147,149,155,null,null,null,null,null,null,null,null,null,null,null,null]],
+  [36, 37, [null,78,81,84,89,93,97,101,104,108,112,115,119,124,131,137,143,146,152,155,null,null,null,null,null,null,null,null,null,null,null]],
+  [38, 39, [null,75,79,82,87,91,95,99,103,106,110,113,117,122,129,134,140,143,150,155,null,null,null,null,null,null,null,null,null,null,null]],
+  [40, 41, [null,73,76,79,84,89,93,97,101,104,108,111,115,121,127,132,136,140,147,155,null,null,null,null,null,null,null,null,null,null,null]],
+  [42, 43, [null,70,74,77,82,87,91,95,99,102,106,109,113,119,125,129,133,137,144,153,155,null,null,null,null,null,null,null,null,null,null]],
+  [44, 45, [null,67,71,74,80,85,89,93,97,100,104,107,111,117,123,126,130,134,141,149,152,154,155,null,null,null,null,null,null,null,null]],
+  [46, 47, [null,63,68,72,77,82,86,90,95,98,102,105,109,114,120,124,128,132,138,145,148,152,155,null,null,null,null,null,null,null,null]],
   [48, 49, [null,60,65,69,74,79,83,88,92,95,100,103,106,112,118,121,125,130,135,142,145,149,155,null,null,null,null,null,null,null,null]],
   [50, 51, [null,56,62,66,72,77,81,85,90,93,98,101,104,110,115,119,123,128,133,138,141,146,153,155,null,null,null,null,null,null,null]],
   [52, 53, [null,52,59,64,69,74,78,83,87,90,95,99,102,107,112,116,120,125,130,134,138,144,150,155,null,null,null,null,null,null,null]],
