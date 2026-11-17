@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Penilaian VMI — Asisten Guru</title>
+  <meta name="description" content="Bantu guru PAUD/TK menilai 12 gambar tes Visual-Motor Integration (VMI) anak dari HP.">
+  <meta name="theme-color" content="#2F5D50">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <a class="skip" href="#main">Lewati ke isi</a>
+  <header class="appbar">
+    <button class="icon-btn" id="backBtn" aria-label="Kembali" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect x="3" y="3" width="42" height="42" rx="12"/><path d="M14 30l7-14 6 10 4-6 4 10"/></svg>
+      <div>
+        <h1 id="pageTitle">Penilaian VMI</h1>
+        <p class="sub" id="pageSub">Asisten koreksi untuk guru</p>
+      </div>
+    </div>
+    <span class="engine" id="engineBadge" data-state="idle" role="status" aria-live="polite" title="Status mesin penilai">
+      <span class="dot"></span><span class="txt">Mesin belum dimuat</span>
+    </span>
+  </header>
+
+  <main id="main" tabindex="-1"></main>
+
+  <!-- Dialog potong / putar foto -->
+  <dialog id="cropDlg" aria-labelledby="cropTitle">
+    <form method="dialog" class="dlg">
+      <header class="dlg-head">
+        <h2 id="cropTitle">Rapikan foto</h2>
+        <p class="hint">Geser jari di atas foto untuk memilih <b>hanya satu gambar</b> anak. Biarkan sedikit ruang putih di sekelilingnya.</p>
+      </header>
+      <div class="crop-stage" id="cropStage">
+        <canvas id="cropCanvas" aria-label="Foto yang akan dipotong"></canvas>
+        <div class="crop-rect" id="cropRect" hidden></div>
+      </div>
+      <div class="dlg-actions wrap">
+        <button type="button" class="btn ghost" id="cropRotate">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>Putar
+        </button>
+        <button type="button" class="btn ghost" id="cropReset">Seluruh foto</button>
+        <span class="grow"></span>
+        <button value="cancel" class="btn ghost">Batal</button>
+        <button type="button" class="btn primary" id="cropOk">Pakai foto ini</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Dialog lihat gambar besar -->
+  <dialog id="viewDlg" aria-labelledby="viewTitle">
+    <form method="dialog" class="dlg">
+      <header class="dlg-head row">
+        <h2 id="viewTitle">Gambar</h2>
+        <button value="close" class="icon-btn" aria-label="Tutup">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="seg" role="tablist" aria-label="Pilih tampilan">
+        <button type="button" role="tab" id="segRes" aria-selected="true">Hasil deteksi</button>
+        <button type="button" role="tab" id="segOrig" aria-selected="false">Foto asli</button>
+      </div>
+      <div class="view-stage"><img id="viewImg" alt=""></div>
+      <p class="hint" id="viewHint"></p>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <input type="file" id="fileOne" accept="image/*" hidden>
+  <input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
+  <input type="file" id="fileMany" accept="image/*" multiple hidden>
+
+  <script src="app.js"></script>
+</body>
+</html>

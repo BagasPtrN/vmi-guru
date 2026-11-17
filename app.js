@@ -1,0 +1,662 @@
+/* Penilaian VMI — antarmuka web untuk guru.
+ * Penilaian otomatis memakai kode Python asli (folder py/symbols) lewat Pyodide di worker.js.
+ */
+"use strict";
+
+// ---------------------------------------------------------------------------
+// 1. Data simbol (urutan sama dengan SYMBOL_MODULES di gui/app.py)
+// ---------------------------------------------------------------------------
+const SYMBOLS = [
+  { mod: "vertical_line",      name: "Garis tegak",               icon: "M24 7V41" },
+  { mod: "horizontal_line",    name: "Garis mendatar",            icon: "M7 24H41" },
+  { mod: "circle",             name: "Lingkaran",                 icon: "M38 24a14 14 0 1 1-28 0a14 14 0 1 1 28 0" },
+  { mod: "cross",              name: "Tanda tambah (+)",          icon: "M24 8V40M8 24H40" },
+  { mod: "right_oblique",      name: "Garis miring kanan (/)",    icon: "M12 38L36 10" },
+  { mod: "square",             name: "Persegi",                   icon: "M10 10H38V38H10Z" },
+  { mod: "left_oblique",       name: "Garis miring kiri (\\)",    icon: "M12 10L36 38" },
+  { mod: "oblique_cross",      name: "Silang miring (×)",         icon: "M11 11L37 37M37 11L11 37" },
+  { mod: "triangle",           name: "Segitiga",                  icon: "M24 8L41 38H7Z" },
+  { mod: "open_square_circle", name: "Persegi terbuka + lingkaran", icon: "M7 6V27H23V6M39 34a8 8 0 1 1-16 0a8 8 0 1 1 16 0" },
+  { mod: "three_line_cross",   name: "Silang tiga garis",         icon: "M7 24H41M16 9L32 39M32 9L16 39" },
+  { mod: "directional_arrows", name: "Panah empat arah",          icon: "M24 6V42M6 24H42M19 11L24 6L29 11M19 37L24 42L29 37M11 19L6 24L11 29M37 19L42 24L37 29" },
+];
+const N = SYMBOLS.length;
+const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const icon = (d, cls = "") => `<svg class="${cls}" viewBox="0 0 48 48" aria-hidden="true"><path d="${d}"/></svg>`;
+const ui = {
+  cam: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  img: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>',
+  crop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2v16h16M2 6h16v16"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+  yes: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>',
+  no: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  print: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z"/></svg>',
+  dl: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  upl: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>',
+  info: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>',
+  redo: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
+};
+
+// ---------------------------------------------------------------------------
+// 2. Penyimpanan (IndexedDB, hanya di HP/laptop guru — tidak dikirim ke server)
+// ---------------------------------------------------------------------------
+const db = (() => {
+  let p;
+  const open = () => p || (p = new Promise((res, rej) => {
+    const r = indexedDB.open("vmi-guru", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("tests", { keyPath: "id" });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+  const tx = async (mode, fn) => {
+    const d = await open();
+    return new Promise((res, rej) => {
+      const t = d.transaction("tests", mode);
+      const out = fn(t.objectStore("tests"));
+      t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+      t.onerror = () => rej(t.error);
+    });
+  };
+  return {
+    put: (v) => tx("readwrite", (s) => s.put(v)),
+    get: (id) => tx("readonly", (s) => s.get(id)),
+    del: (id) => tx("readwrite", (s) => s.delete(id)),
+    all: () => tx("readonly", (s) => s.getAll()),
+  };
+})();
+
+// ---------------------------------------------------------------------------
+// 3. Mesin penilai (Web Worker)
+// ---------------------------------------------------------------------------
+const engine = {
+  worker: null, state: "idle", pending: new Map(), seq: 0,
+  start() {
+    if (this.worker) return;
+    this.worker = new Worker("worker.js");
+    this.setState("loading", "Menyiapkan mesin…");
+    this.worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "status") this.setState(m.pct >= 100 ? "ready" : "loading", m.text, m.pct);
+      else if (m.type === "ready") this.setState("ready", "Mesin siap");
+      else if (m.type === "fatal") { console.error(m.message); this.setState("error", "Gagal memuat — cek internet"); }
+      else if (m.type === "result" || m.type === "error") {
+        const cb = this.pending.get(m.id);
+        this.pending.delete(m.id);
+        cb && cb(m);
+      }
+    };
+    this.worker.onerror = (ev) => {
+      ev.preventDefault && ev.preventDefault();
+      this.setState("error", "Gagal memuat — cek internet");
+      for (const [id, cb] of this.pending) cb({ type: "error", id, message: "worker" });
+      this.pending.clear();
+    };
+    this.worker.postMessage({ type: "init" });
+  },
+  setState(state, text, pct) {
+    this.state = state; this.text = text; this.pct = pct;
+    const b = $("#engineBadge");
+    b.dataset.state = state; b.title = text;
+    $(".txt", b).textContent = { loading: "Memuat…", ready: "Siap", error: "Gagal" }[state] || "";
+    document.dispatchEvent(new CustomEvent("engine"));
+  },
+  check(idx, mod, blob) {
+    this.start();
+    return blob.arrayBuffer().then((bytes) => new Promise((res) => {
+      const id = ++this.seq;
+      this.pending.set(id, res);
+      this.worker.postMessage({ type: "check", id, idx, module: mod, bytes }, [bytes]);
+    }));
+  },
+  restart() { if (this.worker) this.worker.terminate(); this.worker = null; this.pending.clear(); this.start(); },
+};
+
+// ---------------------------------------------------------------------------
+// 4. Utilitas gambar
+// ---------------------------------------------------------------------------
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const url = src instanceof Blob ? URL.createObjectURL(src) : src;
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error("Gambar tidak bisa dibuka"));
+    im.src = url;
+  });
+}
+function canvasToBlob(c, type = "image/png", q) {
+  return new Promise((r) => c.toBlob(r, type, q));
+}
+/** Potong + putar + kecilkan ke maks 1000 px, putih di belakang (untuk PNG transparan). */
+async function prepare(img, rot = 0, crop = null) {
+  const src = rotated(img, rot);
+  const r = crop || { x: 0, y: 0, w: src.width, h: src.height };
+  const s = Math.min(1, PROCESS_MAX / Math.max(r.w, r.h));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(r.w * s)); c.height = Math.max(1, Math.round(r.h * s));
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingQuality = "high";
+  g.drawImage(src, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+  return canvasToBlob(c, "image/png");
+}
+function rotated(img, rot) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  const lim = Math.min(1, 2400 / Math.max(w, h));
+  const W = Math.round(w * lim), H = Math.round(h * lim);
+  const c = document.createElement("canvas");
+  const swap = rot % 2 === 1;
+  c.width = swap ? H : W; c.height = swap ? W : H;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  g.translate(c.width / 2, c.height / 2); g.rotate((rot * Math.PI) / 2);
+  g.drawImage(img, -W / 2, -H / 2, W, H);
+  return c;
+}
+const urlCache = new WeakMap();
+const blobUrl = (b) => { if (!b) return ""; if (!urlCache.has(b)) urlCache.set(b, URL.createObjectURL(b)); return urlCache.get(b); };
+
+// ---------------------------------------------------------------------------
+// 5. Dialog potong foto
+// ---------------------------------------------------------------------------
+const cropper = {
+  open(file) {
+    return new Promise(async (resolve) => {
+      let img;
+      try { img = await loadImage(file); } catch { toast("Foto tidak bisa dibuka"); return resolve(null); }
+      const dlg = $("#cropDlg"), cv = $("#cropCanvas"), rectEl = $("#cropRect"), stage = $("#cropStage");
+      let rot = 0, work, sel = null, start = null;
+      const draw = () => {
+        work = rotated(img, rot);
+        const maxW = Math.min(stage.clientWidth || 640, 900), maxH = window.innerHeight * 0.58;
+        const s = Math.min(maxW / work.width, maxH / work.height, 1);
+        cv.width = Math.round(work.width * s); cv.height = Math.round(work.height * s);
+        cv.getContext("2d").drawImage(work, 0, 0, cv.width, cv.height);
+        sel = null; rectEl.hidden = true;
+      };
+      const pos = (e) => {
+        const b = cv.getBoundingClientRect();
+        return { x: Math.max(0, Math.min(b.width, e.clientX - b.left)), y: Math.max(0, Math.min(b.height, e.clientY - b.top)), b };
+      };
+      const paint = () => {
+        if (!sel) { rectEl.hidden = true; return; }
+        const b = cv.getBoundingClientRect(), sb = stage.getBoundingClientRect();
+        Object.assign(rectEl.style, { left: b.left - sb.left + sel.x + "px", top: b.top - sb.top + sel.y + "px", width: sel.w + "px", height: sel.h + "px" });
+        rectEl.hidden = false;
+      };
+      const down = (e) => { start = pos(e); stage.setPointerCapture(e.pointerId); sel = { x: start.x, y: start.y, w: 0, h: 0 }; paint(); };
+      const move = (e) => {
+        if (!start) return;
+        const p = pos(e);
+        sel = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+        paint();
+      };
+      const up = () => { start = null; if (sel && (sel.w < 14 || sel.h < 14)) { sel = null; paint(); } };
+      stage.onpointerdown = down; stage.onpointermove = move; stage.onpointerup = up; stage.onpointercancel = up;
+      $("#cropRotate").onclick = () => { rot = (rot + 1) % 4; draw(); };
+      $("#cropReset").onclick = () => { sel = null; paint(); };
+      const finish = async (ok) => {
+        let crop = null;
+        if (ok && sel) {   // hitung sebelum dialog ditutup (setelah ditutup ukurannya 0)
+          const b = cv.getBoundingClientRect(), k = work.width / b.width;
+          crop = { x: sel.x * k, y: sel.y * k, w: sel.w * k, h: sel.h * k };
+        }
+        dlg.onclose = null;
+        if (dlg.open) dlg.close();
+        if (!ok) return resolve(null);
+        resolve(await prepare(img, rot, crop));
+      };
+      $("#cropOk").onclick = () => finish(true);
+      dlg.onclose = () => finish(false);
+      dlg.showModal();
+      requestAnimationFrame(draw);
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 6. State & routing
+// ---------------------------------------------------------------------------
+const state = { draft: null, current: null };
+function newDraft() {
+  const d = new Date();
+  return {
+    child: { name: "", ageY: "", ageM: "", cls: localStorage.getItem("vmi-cls") || "", examiner: localStorage.getItem("vmi-examiner") || "", date: d.toISOString().slice(0, 10) },
+    slots: Array.from({ length: N }, () => ({ blob: null, file: null })),
+  };
+}
+function setHeader(title, sub, back) {
+  $("#pageTitle").textContent = title;
+  $("#pageSub").textContent = sub;
+  $("#backBtn").hidden = !back;
+  document.title = title + " — Penilaian VMI";
+}
+function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
+$("#backBtn").onclick = () => (history.length > 1 ? history.back() : go("#/"));
+window.addEventListener("hashchange", route);
+
+async function route() {
+  const h = location.hash || "#/";
+  const main = $("#main");
+  document.body.classList.remove("has-bar");
+  const old = $(".actionbar"); old && old.remove();
+  if (h.startsWith("#/baru")) await viewNew(main);
+  else if (h.startsWith("#/hasil/")) await viewResult(main, h.split("/")[2]);
+  else await viewHome(main);
+  window.scrollTo(0, 0);
+  main.focus({ preventScroll: true });
+}
+
+let toastT;
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2600);
+}
+const fmtDate = (s) => { try { return new Date(s + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return s; } };
+const ageText = (c) => [c.ageY ? `${c.ageY} th` : "", c.ageM ? `${c.ageM} bln` : ""].filter(Boolean).join(" ") || "–";
+const finalOf = (it) => (it.final ?? it.auto);
+const totalOf = (t) => t.items.reduce((a, it) => a + (finalOf(it) === 1 ? 1 : 0), 0);
+
+// ---------------------------------------------------------------------------
+// 7. Halaman: Beranda
+// ---------------------------------------------------------------------------
+async function viewHome(main) {
+  setHeader("Penilaian VMI", "Asisten koreksi untuk guru", false);
+  const tests = (await db.all()).sort((a, b) => (b.created || 0) - (a.created || 0));
+  const resume = state.draft && state.draft.slots.some((s) => s.blob);
+  main.innerHTML = `
+    <section class="hero">
+      ${icon("M7 24H41M16 9L32 39M32 9L16 39", "hero-art")}
+      <h2>Nilai gambar anak dalam hitungan detik</h2>
+      <p>Foto 12 gambar tes VMI, aplikasi memberi penilaian awal, lalu Ibu/Bapak guru tinggal memastikan benar atau salah.</p>
+      <div class="row wrap">
+        <a class="btn primary lg" href="#/baru">${ui.plus}${resume ? "Lanjutkan tes" : "Mulai tes baru"}</a>
+        <button class="btn ghost" id="demoBtn">Coba dengan contoh</button>
+      </div>
+    </section>
+    <div class="steps" aria-label="Cara pakai">
+      <div class="step"><b>1</b><p>Isi nama &amp; usia anak</p></div>
+      <div class="step"><b>2</b><p>Foto tiap gambar (bisa dari galeri)</p></div>
+      <div class="step"><b>3</b><p>Periksa hasil &amp; koreksi bila perlu</p></div>
+    </div>
+
+    <section class="section" aria-labelledby="hTitle">
+      <div class="section-title">
+        <h2 id="hTitle">Riwayat penilaian</h2>
+        ${tests.length ? `<button class="btn ghost" id="csvBtn">${ui.dl}Unduh rekap</button>` : ""}
+      </div>
+      ${tests.length ? `
+        <label class="sr" for="q" hidden>Cari nama anak</label>
+        <input class="search" id="q" type="search" placeholder="Cari nama anak atau kelas…" aria-label="Cari nama anak atau kelas">
+        <div class="list" id="list" style="margin-top:10px"></div>` : `
+        <div class="card empty">
+          ${icon("M10 10H38V38H10ZM16 20H32M16 27H28")}
+          <p><b>Belum ada penilaian.</b><br>Hasil tes yang sudah dinilai akan muncul di sini dan tersimpan di perangkat ini.</p>
+        </div>`}
+    </section>
+    <p class="hint small">Data anak hanya disimpan di perangkat ini (tidak diunggah ke internet). Hasil otomatis adalah alat bantu — keputusan akhir tetap pada guru.</p>`;
+
+  $("#demoBtn").onclick = loadDemo;
+  if (!tests.length) return;
+  const list = $("#list");
+  const render = (q = "") => {
+    const f = tests.filter((t) => (t.child.name + " " + t.child.cls).toLowerCase().includes(q.toLowerCase()));
+    list.innerHTML = f.map((t) => {
+      const done = t.items.filter((i) => finalOf(i) != null).length;
+      return `<button class="item" data-id="${t.id}">
+        <span class="avatar" aria-hidden="true">${esc((t.child.name || "?").trim().charAt(0).toUpperCase())}</span>
+        <span class="who"><b>${esc(t.child.name || "Tanpa nama")}</b>
+          <span>${esc(ageText(t.child))}${t.child.cls ? " · " + esc(t.child.cls) : ""} · ${fmtDate(t.child.date)}</span></span>
+        <span class="pill" aria-label="Skor ${totalOf(t)} dari ${N}">${totalOf(t)}/${N}${done < N ? "*" : ""}</span>
+      </button>`;
+    }).join("") || `<p class="muted">Tidak ada yang cocok.</p>`;
+    list.querySelectorAll(".item").forEach((b) => (b.onclick = () => go("#/hasil/" + b.dataset.id)));
+  };
+  render();
+  $("#q").oninput = (e) => render(e.target.value);
+  $("#csvBtn").onclick = () => exportCsv(tests);
+}
+
+async function loadDemo() {
+  state.draft = newDraft();
+  state.draft.child.name = "Contoh Anak";
+  state.draft.child.ageY = "5";
+  go("#/baru");
+  toast("Memuat 12 gambar contoh…");
+  const blobs = await Promise.all(SYMBOLS.map((_, i) => fetch(`sample/${i + 1}.png`).then((r) => r.blob())));
+  blobs.forEach((b, i) => (state.draft.slots[i].blob = b));
+  if (location.hash.startsWith("#/baru")) route();
+}
+
+function exportCsv(tests) {
+  const head = ["Nama", "Usia (th)", "Usia (bln)", "Kelas", "Tanggal", "Pemeriksa", "Skor", ...SYMBOLS.map((s, i) => `${i + 1}. ${s.name}`), "Catatan"];
+  const rows = tests.map((t) => [t.child.name, t.child.ageY, t.child.ageM, t.child.cls, t.child.date, t.child.examiner, totalOf(t),
+    ...t.items.map((it) => (finalOf(it) == null ? "" : finalOf(it))), t.notes || ""]);
+  const csv = [head, ...rows].map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `rekap-vmi-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+}
+
+// ---------------------------------------------------------------------------
+// 8. Halaman: Tes baru
+// ---------------------------------------------------------------------------
+async function viewNew(main) {
+  setHeader("Tes baru", "Langkah 1–2: data anak & foto gambar", true);
+  engine.start();
+  if (!state.draft) state.draft = newDraft();
+  const d = state.draft, c = d.child;
+  main.innerHTML = `
+    <section class="card" aria-labelledby="cTitle">
+      <h2 id="cTitle" style="font-size:18px;font-weight:800;margin-bottom:12px">Data anak</h2>
+      <div class="form-grid">
+        <div class="field full"><label for="fName">Nama anak <span class="muted">(wajib)</span></label>
+          <input id="fName" autocomplete="off" value="${esc(c.name)}" placeholder="mis. Aisyah Putri" required></div>
+        <div class="field"><label id="ageLbl">Usia</label>
+          <div class="age-row" role="group" aria-labelledby="ageLbl">
+            <select id="fAgeY" aria-label="Tahun">${opt(["", "2", "3", "4", "5", "6", "7", "8"], c.ageY, (v) => (v ? v + " tahun" : "Tahun"))}</select>
+            <select id="fAgeM" aria-label="Bulan">${opt(["", ...Array.from({ length: 12 }, (_, i) => String(i))], c.ageM, (v) => (v === "" ? "Bulan" : v + " bulan"))}</select>
+          </div></div>
+        <div class="field"><label for="fDate">Tanggal tes</label><input id="fDate" type="date" value="${esc(c.date)}"></div>
+        <div class="field"><label for="fCls">Kelas / kelompok</label><input id="fCls" value="${esc(c.cls)}" placeholder="mis. TK B1"></div>
+        <div class="field"><label for="fEx">Nama pemeriksa</label><input id="fEx" value="${esc(c.examiner)}" placeholder="mis. Bu Rina"></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="sTitle">
+      <div class="section-title"><h2 id="sTitle">Foto 12 gambar</h2><span class="muted small" id="filledTxt"></span></div>
+      <div class="notice" style="margin-bottom:12px">${ui.info}<div>Satu foto untuk satu gambar. Foto tegak lurus dari atas, cahaya terang, tanpa bayangan. Setelah memotret, geser jari untuk memilih bagian gambarnya saja.</div></div>
+      <div class="row wrap" style="margin-bottom:12px">
+        <button class="btn ghost" id="manyBtn">${ui.upl}Pilih banyak foto sekaligus</button>
+        <button class="btn ghost danger" id="clearBtn">${ui.trash}Kosongkan</button>
+      </div>
+      <div class="slots" id="slots"></div>
+    </section>`;
+
+  const bind = (id, key, store) => { const el = $(id); el.oninput = el.onchange = () => { c[key] = el.value; if (store) localStorage.setItem(store, el.value); }; };
+  bind("#fName", "name"); bind("#fAgeY", "ageY"); bind("#fAgeM", "ageM"); bind("#fDate", "date");
+  bind("#fCls", "cls", "vmi-cls"); bind("#fEx", "examiner", "vmi-examiner");
+
+  const slotsEl = $("#slots");
+  const renderSlots = () => {
+    slotsEl.innerHTML = d.slots.map((s, i) => {
+      const sym = SYMBOLS[i];
+      return `<div class="slot ${s.blob ? "filled" : ""}" data-i="${i}">
+        <div class="slot-head"><span class="num">${i + 1}</span><span class="slot-name">${esc(sym.name)}</span>${icon(sym.icon, "slot-ref")}</div>
+        <button class="slot-body" data-act="${s.blob ? "view" : "cam"}" aria-label="${s.blob ? "Lihat foto " : "Ambil foto "}${esc(sym.name)}">
+          ${s.blob ? `<img src="${blobUrl(s.blob)}" alt="Foto gambar ${esc(sym.name)}">` : `<span class="ph">${ui.cam}Ketuk untuk memotret</span>`}
+        </button>
+        <div class="slot-actions">
+          ${s.blob
+            ? `<button class="btn ghost" data-act="${s.file ? "recrop" : "cam"}">${s.file ? ui.crop + "Rapikan" : ui.cam + "Ulang"}</button>
+               <button class="btn ghost" data-act="del" aria-label="Hapus foto ${esc(sym.name)}">${ui.trash}</button>`
+            : `<button class="btn ghost" data-act="cam">${ui.cam}Kamera</button>
+               <button class="btn ghost" data-act="gal">${ui.img}Galeri</button>`}
+        </div></div>`;
+    }).join("");
+    const filled = d.slots.filter((s) => s.blob).length;
+    $("#filledTxt").textContent = `${filled} dari ${N} terisi`;
+    bar.querySelector(".meta").innerHTML = `<b>${filled}/${N}</b> foto siap<br><span id="engTxt">${engineLine()}</span>`;
+    bar.querySelector("#scoreBtn").disabled = filled === 0;
+  };
+  const engineLine = () => engine.state === "ready" ? "Mesin penilai siap" : engine.state === "error" ? "Mesin gagal dimuat" : esc(engine.text || "Menyiapkan mesin…");
+
+  const pick = (input) => new Promise((res) => {
+    input.value = ""; input.onchange = () => res(input.files && input.files[0] ? input.files[0] : null); input.click();
+  });
+  slotsEl.onclick = async (e) => {
+    const b = e.target.closest("[data-act]"); if (!b) return;
+    const i = +b.closest(".slot").dataset.i, s = d.slots[i], act = b.dataset.act;
+    if (act === "del") { s.blob = s.file = null; renderSlots(); return; }
+    if (act === "view") { viewer.open(SYMBOLS[i].name, null, blobUrl(s.blob), "Foto yang akan dinilai."); return; }
+    const file = act === "recrop" ? s.file : await pick(act === "gal" ? $("#fileOne") : $("#fileCam"));
+    if (!file) return;
+    const blob = await cropper.open(file);
+    if (blob) { s.blob = blob; s.file = file; renderSlots(); }
+  };
+  $("#manyBtn").onclick = async () => {
+    const inp = $("#fileMany"); inp.value = "";
+    inp.onchange = async () => {
+      const files = [...inp.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      if (!files.length) return;
+      const targets = files.length >= N ? d.slots.map((_, i) => i) : d.slots.map((s, i) => (s.blob ? -1 : i)).filter((i) => i >= 0);
+      let n = 0;
+      for (const f of files) {
+        if (n >= targets.length) break;
+        try { const im = await loadImage(f); const s = d.slots[targets[n]]; s.blob = await prepare(im); s.file = f; n++; } catch {}
+      }
+      renderSlots();
+      toast(`${n} foto dimasukkan sesuai urutan nama file. Ketuk "Rapikan" bila perlu.`);
+    };
+    inp.click();
+  };
+  $("#clearBtn").onclick = () => { if (confirm("Hapus semua foto di tes ini?")) { d.slots.forEach((s) => (s.blob = s.file = null)); renderSlots(); } };
+
+  const bar = document.createElement("div");
+  bar.className = "actionbar";
+  bar.innerHTML = `<div class="inner"><div class="meta grow"></div><button class="btn primary lg" id="scoreBtn">Nilai sekarang</button></div>`;
+  document.body.appendChild(bar);
+  const onEng = () => { const t = $("#engTxt"); if (t) t.innerHTML = engineLine(); };
+  document.addEventListener("engine", onEng);
+  renderSlots();
+
+  $("#scoreBtn").onclick = async () => {
+    if (!c.name.trim()) { toast("Isi nama anak dulu ya."); $("#fName").focus(); return; }
+    const filled = d.slots.filter((s) => s.blob).length;
+    if (filled < N && !confirm(`Baru ${filled} dari ${N} gambar yang difoto. Gambar yang kosong dihitung "tidak dikerjakan" (skor 0). Lanjut menilai?`)) return;
+    const test = {
+      id: (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()),
+      created: Date.now(), child: { ...c, name: c.name.trim() }, notes: "",
+      items: d.slots.map((s) => ({ src: s.blob, res: null, auto: s.blob ? null : 0, final: null, empty: !s.blob })),
+    };
+    await db.put(test);
+    state.draft = null;
+    document.removeEventListener("engine", onEng);
+    state.current = test;
+    go("#/hasil/" + test.id);
+    runScoring(test);
+  };
+}
+function opt(vals, cur, label) { return vals.map((v) => `<option value="${v}" ${String(cur) === v ? "selected" : ""}>${label(v)}</option>`).join(""); }
+
+// ---------------------------------------------------------------------------
+// 9. Proses penilaian
+// ---------------------------------------------------------------------------
+const running = new Set();
+const live = new Map();   // tes yang sedang/baru dinilai (objek yang sama dipakai UI)
+async function runScoring(test, only = null) {
+  if (running.has(test.id)) return;
+  if (engine.state === "error") engine.restart();
+  running.add(test.id);
+  live.set(test.id, test);
+  const t0 = performance.now();
+  let failed = false;
+  for (let i = 0; i < N; i++) {
+    const it = test.items[i];
+    if (it.empty || (only != null && only !== i)) continue;
+    it.auto = null; it.res = null; it.error = null; it.busy = true;
+    refreshItem(test, i);
+    const r = await engine.check(i, SYMBOLS[i].mod, it.src);
+    it.busy = false;
+    if (r.type === "error" && engine.state !== "ready") {
+      // mesin gagal dimuat (biasanya karena internet) — jangan anggap anak salah
+      failed = true;
+      refreshItem(test, i);
+      toast("Mesin penilai gagal dimuat. Periksa internet lalu tekan \"Nilai ulang otomatis\".");
+      break;
+    }
+    if (r.type === "error") { it.auto = 0; it.error = r.message; }
+    else { it.auto = r.score ? 1 : 0; it.res = r.image; it.error = r.error; it.ms = r.ms; }
+    await db.put(stripBusy(test));
+    refreshItem(test, i);
+  }
+  test.lastRunMs = Math.round(performance.now() - t0);
+  await db.put(stripBusy(test));
+  running.delete(test.id);
+  refreshSummary(test);
+  if (!failed && location.hash === "#/hasil/" + test.id) toast(`Selesai! Skor otomatis ${test.items.reduce((a, b) => a + (b.auto || 0), 0)}/${N}. Silakan periksa.`);
+}
+const stripBusy = (t) => ({ ...t, items: t.items.map(({ busy, ...r }) => r) });
+
+// ---------------------------------------------------------------------------
+// 10. Halaman: Hasil
+// ---------------------------------------------------------------------------
+async function viewResult(main, id) {
+  let test = live.get(id) || (state.current && state.current.id === id ? state.current : await db.get(id));
+  if (!test) { main.innerHTML = `<div class="card empty"><p>Data tidak ditemukan.</p><a class="btn primary" href="#/">Ke beranda</a></div>`; return; }
+  state.current = test;
+  setHeader(test.child.name || "Hasil", "Langkah 3: periksa & koreksi", true);
+  const c = test.child;
+  main.innerHTML = `
+    <div class="print-only"><h2>Laporan Tes Visual-Motor Integration (VMI)</h2><br></div>
+    <section class="card" aria-labelledby="sumTitle">
+      <div class="score-hero">
+        <div class="ring" id="ring" role="img"><div><span><b id="ringNum">0</b></span><span>dari ${N}</span></div></div>
+        <div>
+          <h2 id="sumTitle">${esc(c.name)}</h2>
+          <dl class="kv" style="margin-top:6px">
+            <dt>Usia</dt><dd>${esc(ageText(c))}</dd>
+            <dt>Tanggal</dt><dd>${fmtDate(c.date)}</dd>
+            ${c.cls ? `<dt>Kelas</dt><dd>${esc(c.cls)}</dd>` : ""}
+            ${c.examiner ? `<dt>Pemeriksa</dt><dd>${esc(c.examiner)}</dd>` : ""}
+          </dl>
+          <div class="chips" id="chips"></div>
+        </div>
+      </div>
+      <div class="progress no-print" id="prog" style="margin-top:14px" hidden>
+        <div class="bar"><i id="progBar"></i></div><span class="small muted" id="progTxt"></span>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="lTitle">
+      <div class="section-title"><h2 id="lTitle">Hasil per gambar</h2></div>
+      <p class="hint no-print" style="margin:-4px 0 12px">Garis <b style="color:var(--ok)">hijau</b> = bentuk dikenali, <b style="color:var(--no)">merah</b> = tidak memenuhi syarat. Ketuk gambar untuk memperbesar, lalu tekan <b>Benar</b> atau <b>Salah</b> bila Ibu/Bapak tidak setuju.</p>
+      <div class="results" id="results"></div>
+    </section>
+
+    <section class="card section" aria-labelledby="nTitle">
+      <div class="field"><label id="nTitle" for="notes">Catatan guru</label>
+        <textarea id="notes" placeholder="mis. Anak memegang pensil terlalu kuat, cepat lelah di gambar 9…">${esc(test.notes || "")}</textarea></div>
+      <p class="print-only" id="notesPrint"></p>
+    </section>
+
+    <div class="row wrap no-print">
+      <button class="btn primary" id="printBtn">${ui.print}Cetak / simpan PDF</button>
+      <button class="btn ghost" id="rerunBtn">${ui.redo}Nilai ulang otomatis</button>
+      <span class="grow"></span>
+      <button class="btn danger" id="delBtn">${ui.trash}Hapus</button>
+    </div>
+    <details class="section no-print small muted"><summary>Info teknis</summary><div id="tech"></div></details>`;
+
+  const resEl = $("#results");
+  resEl.innerHTML = test.items.map((_, i) => `<article class="res" id="res${i}" aria-labelledby="rt${i}"></article>`).join("");
+  test.items.forEach((_, i) => refreshItem(test, i));
+  refreshSummary(test);
+
+  resEl.onclick = async (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const i = +b.closest(".res").id.slice(3), it = test.items[i];
+    if (b.dataset.act === "view") {
+      viewer.open(`${i + 1}. ${SYMBOLS[i].name}`, it.res, blobUrl(it.src), it.error ? "Catatan sistem: " + it.error : "");
+      return;
+    }
+    if (b.dataset.v != null) {
+      const v = +b.dataset.v;
+      it.final = v === it.auto ? null : v;   // sama dengan otomatis → bukan koreksi
+      if (it.empty) it.final = v === 0 ? null : v;
+      await db.put(stripBusy(test));
+      refreshItem(test, i); refreshSummary(test);
+    }
+  };
+  let nt;
+  $("#notes").oninput = (e) => { test.notes = e.target.value; clearTimeout(nt); nt = setTimeout(() => db.put(stripBusy(test)), 400); };
+  $("#printBtn").onclick = () => { $("#notesPrint").textContent = test.notes ? "Catatan: " + test.notes : ""; window.print(); };
+  $("#rerunBtn").onclick = () => { if (!running.has(test.id)) { test.items.forEach((it) => (it.final = null)); runScoring(test); } };
+  $("#delBtn").onclick = async () => { if (confirm(`Hapus hasil tes ${c.name}? Tindakan ini tidak bisa dibatalkan.`)) { await db.del(test.id); state.current = null; go("#/"); toast("Hasil tes dihapus."); } };
+
+  // Tes yang tersimpan tapi belum selesai dinilai (mis. aplikasi ditutup) → lanjutkan
+  if (!running.has(test.id) && test.items.some((it) => !it.empty && it.auto == null)) runScoring(test);
+}
+
+function refreshItem(test, i) {
+  const el = document.getElementById("res" + i);
+  if (!el || state.current !== test) return;
+  const it = test.items[i], sym = SYMBOLS[i], f = finalOf(it);
+  el.className = "res " + (it.busy || f == null ? "pending" : f ? "pass" : "fail");
+  const thumb = it.res || (it.src ? blobUrl(it.src) : "");
+  let autoTxt;
+  if (it.empty) autoTxt = "Tidak difoto — dihitung tidak dikerjakan";
+  else if (it.busy) autoTxt = "Sedang dinilai…";
+  else if (it.auto == null) autoTxt = "Menunggu giliran…";
+  else autoTxt = `Penilaian otomatis: <b style="color:${it.auto ? "var(--ok)" : "var(--no)"}">${it.auto ? "Benar" : "Salah"}</b>${it.error ? " (gambar tidak terbaca)" : ""}`;
+  el.innerHTML = `
+    <button class="thumb" data-act="view" ${thumb ? "" : "disabled"} aria-label="Perbesar gambar ${esc(sym.name)}">
+      ${it.busy ? '<span class="spinner" aria-hidden="true"></span>' : thumb ? `<img src="${thumb}" alt="">` : icon(sym.icon, "slot-ref")}
+    </button>
+    <div>
+      <h3 id="rt${i}"><span class="num">${i + 1}</span>${esc(sym.name)} ${it.final != null ? '<span class="edited">dikoreksi guru</span>' : ""}</h3>
+      <p class="auto">${autoTxt}</p>
+      <div class="verdict" role="group" aria-label="Keputusan guru untuk ${esc(sym.name)}">
+        <button class="yes" data-v="1" aria-pressed="${f === 1}" ${it.busy || (f == null && !it.empty) ? "disabled" : ""}>${ui.yes}Benar</button>
+        <button class="no" data-v="0" aria-pressed="${f === 0}" ${it.busy || (f == null && !it.empty) ? "disabled" : ""}>${ui.no}Salah</button>
+      </div>
+    </div>`;
+  refreshSummary(test);
+}
+
+function refreshSummary(test) {
+  if (state.current !== test || !$("#ring")) return;
+  const total = totalOf(test);
+  const done = test.items.filter((it) => !it.busy && finalOf(it) != null).length;
+  const edited = test.items.filter((it) => it.final != null).length;
+  $("#ring").style.setProperty("--p", (total / N) * 100);
+  $("#ring").setAttribute("aria-label", `Skor ${total} dari ${N}`);
+  $("#ringNum").textContent = total;
+  const pass = test.items.filter((it) => finalOf(it) === 1).length;
+  $("#chips").innerHTML = `
+    <span class="chip ok">${pass} benar</span>
+    <span class="chip no">${test.items.filter((it) => finalOf(it) === 0).length} salah</span>
+    ${edited ? `<span class="chip warn">${edited} dikoreksi guru</span>` : ""}`;
+  const busy = done < N;
+  $("#prog").hidden = !busy;
+  if (busy) {
+    $("#progBar").style.width = (done / N) * 100 + "%";
+    $("#progTxt").textContent = engine.state === "ready" ? `Menilai ${done}/${N}…` : engine.text || "Menyiapkan…";
+  }
+  const ms = test.items.filter((i) => i.ms).map((i) => i.ms);
+  $("#tech").innerHTML = `<p>Penilaian otomatis memakai kode deteksi Python + OpenCV dari tugas akhir (dijalankan di browser lewat Pyodide).
+    ${ms.length ? `Rata-rata ${Math.round(ms.reduce((a, b) => a + b, 0) / ms.length)} ms per simbol di perangkat ini.` : ""}</p>`;
+}
+document.addEventListener("engine", () => { if (state.current) refreshSummary(state.current); });
+
+// ---------------------------------------------------------------------------
+// 11. Penampil gambar besar
+// ---------------------------------------------------------------------------
+const viewer = {
+  open(title, res, orig, hint) {
+    const dlg = $("#viewDlg"), img = $("#viewImg"), a = $("#segRes"), b = $("#segOrig");
+    $("#viewTitle").textContent = title; $("#viewHint").textContent = hint || "";
+    const show = (which) => {
+      const useRes = which === "res" && res;
+      img.src = useRes ? res : orig; img.alt = (useRes ? "Hasil deteksi " : "Foto asli ") + title;
+      a.setAttribute("aria-selected", !!useRes); b.setAttribute("aria-selected", !useRes);
+    };
+    a.disabled = !res; a.onclick = () => show("res"); b.onclick = () => show("orig");
+    $(".seg", dlg).hidden = !res;
+    show(res ? "res" : "orig");
+    dlg.showModal();
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 12. Mulai
+// ---------------------------------------------------------------------------
+window.addEventListener("beforeunload", (e) => {
+  if (state.draft && state.draft.slots.some((s) => s.blob)) { e.preventDefault(); e.returnValue = ""; }
+});
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+route();
