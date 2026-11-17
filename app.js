@@ -21,7 +21,7 @@ const SYMBOLS = [
   { mod: "directional_arrows", name: "Panah empat arah",          icon: "M24 6V42M6 24H42M19 11L24 6L29 11M19 37L24 42L29 37M11 19L6 24L11 29M37 19L42 24L37 29" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "4";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "5";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
