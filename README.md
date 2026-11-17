@@ -45,7 +45,7 @@ worker.js             memuat Pyodide + OpenCV, menjalankan checker di latar bela
 pyodide/              Pyodide 314.0.8 + wheel numpy & opencv-python (di-host sendiri, tanpa CDN)
 py/runner.py          jembatan: memanggil <Simbol>Checker.check(path) → skor + gambar hasil
 py/symbols/*.py       12 checker asli dari tugas akhir (tidak diubah)
-sample/1..12.png      contoh gambar (dari dataset Valid) untuk tombol "Coba dengan contoh"
+sample/valid|invalid  contoh gambar dataset untuk "Coba dengan contoh" (campuran / semua benar / semua salah)
 sw.js, manifest       agar bisa offline & dipasang di layar utama
 ```
 

@@ -21,7 +21,7 @@ const SYMBOLS = [
   { mod: "directional_arrows", name: "Panah empat arah",          icon: "M24 6V42M6 24H42M19 11L24 6L29 11M19 37L24 42L29 37M11 19L6 24L11 29M37 19L42 24L37 29" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "5";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "6";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -300,7 +300,11 @@ async function viewHome(main) {
     </section>
     <p class="hint small">Data anak hanya disimpan di perangkat ini (tidak diunggah ke internet). Hasil otomatis adalah alat bantu — keputusan akhir tetap pada guru.</p>`;
 
-  $("#demoBtn").onclick = loadDemo;
+  $("#demoBtn").onclick = () => {
+    const dlg = $("#demoDlg");
+    dlg.querySelectorAll(".demo-opt").forEach((b) => (b.onclick = () => { dlg.close(); loadDemo(b.dataset.mode); }));
+    dlg.showModal();
+  };
   if (!tests.length) return;
   const list = $("#list");
   const render = (q = "") => {
@@ -321,13 +325,20 @@ async function viewHome(main) {
   $("#csvBtn").onclick = () => exportCsv(tests);
 }
 
-async function loadDemo() {
+const DEMO_NAMES = { mix: "Contoh Campuran", valid: "Contoh Semua Benar", invalid: "Contoh Semua Salah" };
+async function loadDemo(mode = "mix") {
+  // Campuran: acak, tapi minimal 3 benar & 3 salah
+  let pick;
+  if (mode === "mix") {
+    do { pick = SYMBOLS.map(() => (Math.random() < 0.5 ? "valid" : "invalid")); }
+    while (pick.filter((p) => p === "valid").length < 3 || pick.filter((p) => p === "invalid").length < 3);
+  } else pick = SYMBOLS.map(() => mode);
   state.draft = newDraft();
-  state.draft.child.name = "Contoh Anak";
+  state.draft.child.name = DEMO_NAMES[mode] || "Contoh Anak";
   state.draft.child.ageY = "5";
   go("#/baru");
   toast("Memuat 12 gambar contoh…");
-  const blobs = await Promise.all(SYMBOLS.map((_, i) => fetch(`sample/${i + 1}.png`).then((r) => r.blob())));
+  const blobs = await Promise.all(SYMBOLS.map((_, i) => fetch(`sample/${pick[i]}/${i + 1}.png`).then((r) => r.blob())));
   blobs.forEach((b, i) => (state.draft.slots[i].blob = b));
   if (location.hash.startsWith("#/baru")) route();
 }

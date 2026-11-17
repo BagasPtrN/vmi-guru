@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="app.css?v=5">
+  <link rel="stylesheet" href="app.css?v=6">
 </head>
 <body>
   <a class="skip" href="#main">Lewati ke isi</a>
@@ -80,12 +80,39 @@
     </form>
   </dialog>
 
+  <!-- Dialog pilih contoh -->
+  <dialog id="demoDlg" aria-labelledby="demoTitle">
+    <form method="dialog" class="dlg">
+      <header class="dlg-head row">
+        <h2 id="demoTitle">Coba dengan contoh</h2>
+        <button value="close" class="icon-btn" aria-label="Tutup">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <p class="hint" style="margin-top:-6px">Gambar asli anak dari dataset tugas akhir. Pilih jenis contohnya:</p>
+      <div class="demo-opts">
+        <button type="button" class="demo-opt" data-mode="mix">
+          <span class="demo-ic mix" aria-hidden="true">±</span>
+          <span><b>Campuran</b><small>Sebagian benar, sebagian salah (acak tiap kali dicoba)</small></span>
+        </button>
+        <button type="button" class="demo-opt" data-mode="valid">
+          <span class="demo-ic ok" aria-hidden="true">✓</span>
+          <span><b>Semua benar</b><small>12 gambar yang memenuhi syarat</small></span>
+        </button>
+        <button type="button" class="demo-opt" data-mode="invalid">
+          <span class="demo-ic no" aria-hidden="true">✕</span>
+          <span><b>Semua salah</b><small>12 gambar yang tidak memenuhi syarat</small></span>
+        </button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <input type="file" id="fileOne" accept="image/*" hidden>
   <input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
   <input type="file" id="fileMany" accept="image/*" multiple hidden>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
