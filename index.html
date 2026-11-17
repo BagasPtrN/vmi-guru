@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="app.css?v=4">
 </head>
 <body>
   <a class="skip" href="#main">Lewati ke isi</a>
@@ -70,7 +70,12 @@
         <button type="button" role="tab" id="segRes" aria-selected="true">Hasil deteksi</button>
         <button type="button" role="tab" id="segOrig" aria-selected="false">Foto asli</button>
       </div>
-      <div class="view-stage"><img id="viewImg" alt=""></div>
+      <div class="view-stage">
+        <figure class="fig">
+          <img id="viewImg" alt="">
+          <figcaption class="cap" id="viewCap" hidden></figcaption>
+        </figure>
+      </div>
       <p class="hint" id="viewHint"></p>
     </form>
   </dialog>
@@ -81,6 +86,6 @@
   <input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
   <input type="file" id="fileMany" accept="image/*" multiple hidden>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

@@ -28,7 +28,7 @@ async function init() {
   py.FS.mkdirTree("/app/symbols");
   const base = new URL("py/", self.location.href);
   const fetchText = async (p) => {
-    const r = await fetch(new URL(p, base));
+    const r = await fetch(new URL(p + self.location.search, base), { cache: "no-cache" });
     if (!r.ok) throw new Error("Gagal memuat " + p);
     return r.text();
   };

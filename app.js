@@ -21,6 +21,7 @@ const SYMBOLS = [
   { mod: "directional_arrows", name: "Panah empat arah",          icon: "M24 6V42M6 24H42M19 11L24 6L29 11M19 37L24 42L29 37M11 19L6 24L11 29M37 19L42 24L37 29" },
 ];
 const N = SYMBOLS.length;
+const APP_V = "4";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -76,7 +77,7 @@ const engine = {
   worker: null, state: "idle", pending: new Map(), seq: 0,
   start() {
     if (this.worker) return;
-    this.worker = new Worker("worker.js", { type: "module" });
+    this.worker = new Worker("worker.js?v=" + APP_V, { type: "module" });
     this.setState("loading", "Menyiapkan mesin…");
     this.worker.onmessage = (e) => {
       const m = e.data;
@@ -490,7 +491,7 @@ async function runScoring(test, only = null) {
       break;
     }
     if (r.type === "error") { it.auto = 0; it.error = r.message; }
-    else { it.auto = r.score ? 1 : 0; it.res = r.image; it.error = r.error; it.ms = r.ms; }
+    else { it.auto = r.score ? 1 : 0; it.res = r.image; it.notes = r.notes || []; it.error = r.error; it.ms = r.ms; }
     await db.put(stripBusy(test));
     refreshItem(test, i);
   }
@@ -561,7 +562,7 @@ async function viewResult(main, id) {
     const b = e.target.closest("button"); if (!b) return;
     const i = +b.closest(".res").id.slice(3), it = test.items[i];
     if (b.dataset.act === "view") {
-      viewer.open(`${i + 1}. ${SYMBOLS[i].name}`, it.res, blobUrl(it.src), it.error ? "Catatan sistem: " + it.error : "");
+      viewer.open(`${i + 1}. ${SYMBOLS[i].name}`, it.res, blobUrl(it.src), it.error ? "Catatan sistem: " + it.error : "", it.notes, it.auto);
       return;
     }
     if (b.dataset.v != null) {
@@ -579,7 +580,8 @@ async function viewResult(main, id) {
   $("#delBtn").onclick = async () => { if (confirm(`Hapus hasil tes ${c.name}? Tindakan ini tidak bisa dibatalkan.`)) { await db.del(test.id); state.current = null; go("#/"); toast("Hasil tes dihapus."); } };
 
   // Tes yang tersimpan tapi belum selesai dinilai (mis. aplikasi ditutup) → lanjutkan
-  if (!running.has(test.id) && test.items.some((it) => !it.empty && it.auto == null)) runScoring(test);
+  // atau hasil dari versi lama (gambar masih berisi tulisan) → nilai ulang agar tampilan rapi; koreksi guru tetap
+  if (!running.has(test.id) && test.items.some((it) => !it.empty && (it.auto == null || (it.res && !it.notes)))) runScoring(test);
 }
 
 function refreshItem(test, i) {
@@ -637,13 +639,21 @@ document.addEventListener("engine", () => { if (state.current) refreshSummary(st
 // 11. Penampil gambar besar
 // ---------------------------------------------------------------------------
 const viewer = {
-  open(title, res, orig, hint) {
-    const dlg = $("#viewDlg"), img = $("#viewImg"), a = $("#segRes"), b = $("#segOrig");
+  open(title, res, orig, hint, notes, auto) {
+    const dlg = $("#viewDlg"), img = $("#viewImg"), a = $("#segRes"), b = $("#segOrig"), cap = $("#viewCap");
     $("#viewTitle").textContent = title; $("#viewHint").textContent = hint || "";
+    // Keterangan dari checker, seragam untuk semua simbol: pojok kiri bawah gambar hasil
+    const lines = (notes || []).map((t) => {
+      const st = /\bINVALID\b/i.test(t) ? "no" : /\bVALID\b/i.test(t) ? "ok" : "";
+      return `<span class="${st}">${esc(t)}</span>`;
+    });
+    if (!lines.length && auto != null) lines.push(`<span class="${auto ? "ok" : "no"}">${auto ? "VALID" : "INVALID"}</span>`);
+    cap.innerHTML = lines.join("");
     const show = (which) => {
       const useRes = which === "res" && res;
       img.src = useRes ? res : orig; img.alt = (useRes ? "Hasil deteksi " : "Foto asli ") + title;
       a.setAttribute("aria-selected", !!useRes); b.setAttribute("aria-selected", !useRes);
+      cap.hidden = !useRes || !lines.length;
     };
     a.disabled = !res; a.onclick = () => show("res"); b.onclick = () => show("orig");
     $(".seg", dlg).hidden = !res;
