@@ -1,332 +1,195 @@
-import cv2
-import numpy as np
-import math
-import itertools
+"""Form 18 — Panah empat arah (Directional Arrows).
+Kriteria manual:
+  1. Tidak ada ujung panah yang terbalik atau "melayang" (terlepas dari batang).
+  2. Ujung panah runcing.
+  3. Tidak ada arah yang membingungkan.
+  4. Kaki terpanjang tidak lebih dari 2× kaki terpendek.
+  5. Juga memenuhi semua kriteria Form 10 (dua garis berpotongan, kaki ≥ 1/4 inci,
+     ≥ 1/2 tiap garis dalam 20° dari arah yang benar).
+"""
 import sys
-import traceback
+import math
+from symbols import _vmi_geom as G
+from symbols import _cross as X
+
 
 class DirectionalArrowsChecker:
-    """
-    Kelas untuk mendeteksi cross utama dan kemudian memeriksa keberadaan
-    panah dan celah di setiap ujungnya.
-    Menggunakan metode berbasis kontur yang kokoh untuk deteksi cross awal.
-    """
-
-    # =================================================================================
-    # KONSTANTA DETEKSI (Disamakan dengan CrossChecker)
-    # =================================================================================
-    _MAX_DIMENSION = 1000
-    _BLUR_FACTOR = 0.01
-    _CLOSING_KERNEL_FACTOR = 0.02
-    _PERI_APPROX_FACTOR = 0.05
-    _POINT_MERGE_THRESHOLD = 80
-    _MIN_CONTOUR_AREA = 500
-    _ROI_WIDTH_FACTOR = 0.20
-    _HOUGH_THRESHOLD = 15
-    _HOUGH_MIN_LENGTH_FACTOR = 0.08
-    _HOUGH_MAX_GAP = 40
-    _ANGLE_DIFF_THRESHOLD = 5.0
-    _MIN_ENDPOINT_DISTANCE = 20
-    
-    _HORIZONTAL_ANGLE_MAX = 20
-    _HORIZONTAL_ANGLE_MIN = 160
-    _VERTICAL_ANGLE_MIN = 70
-    _VERTICAL_ANGLE_MAX = 110
-
-    # =================================================================================
-    # METODE GEOMETRI DAN VISUALISASI
-    # =================================================================================
-    @staticmethod
-    def _draw_dashed_line(img, pt1, pt2, color, thickness=1, dash_length=10):
-        dist = ((pt1[0] - pt2[0])**2 + (pt1[1] - pt2[1])**2)**0.5
-        dashes = int(dist / dash_length)
-        if dashes == 0: return
-        for i in range(dashes):
-            start = [int(pt1[0] + (pt2[0] - pt1[0]) * i / dashes), int(pt1[1] + (pt2[1] - pt1[1]) * i / dashes)]
-            end = [int(pt1[0] + (pt2[0] - pt1[0]) * (i + 0.5) / dashes), int(pt1[1] + (pt2[1] - pt1[1]) * (i + 0.5) / dashes)]
-            cv2.line(img, tuple(start), tuple(end), color, thickness)
+    ATTACH_REL = 0.20      # sayap panah harus berada ≤ 20% ukuran gambar dari ujung kaki
+    FLOAT_REL = 0.045      # sayap dianggap "melayang" bila celahnya ke batang > 4,5% ukuran
+    MEET_REL = 0.13        # sayap bertemu di ujung (runcing) bila pangkalnya ≤ 13% dari ujung
+    BARB_ANGLE = (8.0, 85.0)   # sudut sayap terhadap batang (mengarah balik ke pusat)
+    BLUNT_MAX = 130.0      # arah awal satu sayap > 130° dari arah balik = ujung membulat (seperti U)
+    BLUNT_MEAN = 100.0     # rata-rata arah awal sayap di satu ujung > 100° = ujung tumpul
+    HEAD_DIR_MAX = 60.0    # arah kepala panah menyimpang maks 60° dari arah kakinya
+    STRAY_REL = 0.10       # goresan lepas ≥ 10% ukuran yang bukan bagian panah = membingungkan
+    MAX_LEG_RATIO = 2.0
+    ANGLE_TOL = 20.0
+    last_criteria = []
 
     @staticmethod
-    def _draw_dashed_poly(img, points, color, thickness=1):
-        for i in range(len(points)):
-            p1 = points[i]
-            p2 = points[(i + 1) % len(points)]
-            DirectionalArrowsChecker._draw_dashed_line(img, tuple(p1), tuple(p2), color, thickness)
+    def _shafts(d):
+        sts = G.split_sharp(G.strokes(d.graph, merge_r=max(6.0, 2.5 * d.stroke)))
+        cand = [s for s in sts[:6] if s.length >= 0.35 * d.size]
+        best = None
+        for i in range(len(cand)):
+            for j in range(i + 1, len(cand)):
+                a, b = cand[i], cand[j]
+                if G.ang_diff(a.angle, b.angle) < 45:
+                    continue
+                p = G.poly_intersection(a.pts, b.pts, ext=0.06)
+                if p is None:
+                    continue
+                sc = a.length + b.length
+                if best is None or sc > best[0]:
+                    best = (sc, [a, b], p)
+        if best is None:
+            # cadangan: analisis silang biasa
+            T = X.two_lines(d, None, extra_max=1.0)
+            return sts, T["lines"], T["p"]
+        return sts, best[1], best[2]
 
-    @staticmethod
-    def _get_intersection_point(line1, line2):
-        x1, y1, x2, y2 = line1
-        x3, y3, x4, y4 = line2
-        den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if den == 0: return None
-        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den
-        u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den
-        if 0 < t < 1 and 0 < u < 1:
-            return (int(x1 + t * (x2 - x1)), int(y1 + t * (y2 - y1)))
-        return None
-
-    @staticmethod
-    def _calculate_line_angle(line):
-        x1, y1, x2, y2 = line
-        angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
-        return angle + 180 if angle < 0 else angle
-
-    # =================================================================================
-    # LANGKAH 1: DETEKSI CROSS TENGAH (METODE BARU YANG DIPERBAIKI)
-    # =================================================================================
-    @staticmethod
-    def _find_central_cross(image, result_img):
-        """
-        Mendeteksi cross utama menggunakan metode berbasis kontur.
-        Mengembalikan: (status, titik_potong, dict_endpoints)
-        """
-        # Pra-pemrosesan
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur_size = max(3, int(min(gray.shape) * DirectionalArrowsChecker._BLUR_FACTOR))
-        if blur_size % 2 == 0: blur_size += 1
-        blurred = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
-        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        closing_kernel_size = max(3, int(min(gray.shape) * DirectionalArrowsChecker._CLOSING_KERNEL_FACTOR))
-        if closing_kernel_size % 2 == 0: closing_kernel_size += 1
-        kernel = np.ones((closing_kernel_size, closing_kernel_size), np.uint8)
-        closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        
-        # Cari kontur terbesar
-        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return False, "INVALID: No contours detected", None, None
-
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)
-        
-        full_edges = cv2.Canny(blurred, 50, 150, apertureSize=3)
-
-        for cnt in contours:
-            if cv2.contourArea(cnt) < DirectionalArrowsChecker._MIN_CONTOUR_AREA:
-                continue
-
-            hull = cv2.convexHull(cnt)
-            peri = cv2.arcLength(hull, True)
-            approx = cv2.approxPolyDP(hull, DirectionalArrowsChecker._PERI_APPROX_FACTOR * peri, True)
-            
-            # Gabungkan titik yang terlalu dekat
-            if len(approx) > 0:
-                merged_points = []
-                for point in approx:
-                    if not any(np.linalg.norm(point[0] - mp[0]) < DirectionalArrowsChecker._POINT_MERGE_THRESHOLD for mp in merged_points):
-                        merged_points.append(point)
-                approx = np.array(merged_points)
-
-            if len(approx) == 4:
-                points = approx.reshape(4, 2)
-                groups = [(points[0], points[2]), (points[1], points[3])]
-                all_roi_lines = []
-
-                # Buat ROI dan cari garis di dalamnya
-                for pt1, pt2 in groups:
-                    DirectionalArrowsChecker._draw_dashed_poly(result_img, [pt1, pt2], (255, 0, 255), 2)
-                    length = np.linalg.norm(pt1 - pt2)
-                    center = (pt1 + pt2) / 2
-                    width_roi = length * DirectionalArrowsChecker._ROI_WIDTH_FACTOR
-                    angle_deg = math.degrees(math.atan2(pt2[1] - pt1[1], pt2[0] - pt1[0]))
-                    rect = (tuple(center), (length, width_roi), angle_deg)
-                    box = np.intp(cv2.boxPoints(rect))
-                    DirectionalArrowsChecker._draw_dashed_poly(result_img, box, (255, 120, 0), 2)
-                    mask = np.zeros(gray.shape, dtype=np.uint8)
-                    cv2.fillConvexPoly(mask, box, 255)
-                    roi_edges = cv2.bitwise_and(full_edges, full_edges, mask=mask)
-                    lines = cv2.HoughLinesP(roi_edges, 1, np.pi / 180, threshold=DirectionalArrowsChecker._HOUGH_THRESHOLD, minLineLength=int(length * DirectionalArrowsChecker._HOUGH_MIN_LENGTH_FACTOR), maxLineGap=DirectionalArrowsChecker._HOUGH_MAX_GAP)
-                    all_roi_lines.append(lines)
-                    if lines is not None:
-                        for line in lines:
-                            cv2.line(result_img, tuple(line[0][:2]), tuple(line[0][2:]), (255, 255, 0), 1)
-
-                # Cari pasangan garis utama yang berpotongan
-                main_intersecting_pair = None
-                max_len_in_pair = 0
-                
-                if len(all_roi_lines) == 2 and all_roi_lines[0] is not None and all_roi_lines[1] is not None:
-                    for line1 in all_roi_lines[0]:
-                        for line2 in all_roi_lines[1]:
-                            if DirectionalArrowsChecker._get_intersection_point(line1[0], line2[0]):
-                                # Hitung sudut untuk keperluan filter
-                                angle1_check = DirectionalArrowsChecker._calculate_line_angle(line1[0])
-                                angle2_check = DirectionalArrowsChecker._calculate_line_angle(line2[0])
-
-                                if abs(angle1_check - angle2_check) > DirectionalArrowsChecker._ANGLE_DIFF_THRESHOLD:
-                                    # Jika lolos filter, baru periksa panjangnya
-                                    len1 = np.linalg.norm(np.array(line1[0][:2]) - np.array(line1[0][2:]))
-                                    len2 = np.linalg.norm(np.array(line2[0][:2]) - np.array(line2[0][2:]))
-                                    current_max = max(len1, len2)
-                                    if current_max > max_len_in_pair:
-                                        max_len_in_pair = current_max
-                                        main_intersecting_pair = (line1[0], line2[0])
-                
-                if main_intersecting_pair:
-                    lineA, lineB = main_intersecting_pair
-                    angle1 = DirectionalArrowsChecker._calculate_line_angle(lineA)
-                    angle2 = DirectionalArrowsChecker._calculate_line_angle(lineB)
-                    
-                    is_A_horz = (angle1 <= DirectionalArrowsChecker._HORIZONTAL_ANGLE_MAX) or (angle1 >= DirectionalArrowsChecker._HORIZONTAL_ANGLE_MIN)
-                    is_A_vert = (DirectionalArrowsChecker._VERTICAL_ANGLE_MIN <= angle1 <= DirectionalArrowsChecker._VERTICAL_ANGLE_MAX)
-                    is_B_horz = (angle2 <= DirectionalArrowsChecker._HORIZONTAL_ANGLE_MAX) or (angle2 >= DirectionalArrowsChecker._HORIZONTAL_ANGLE_MIN)
-                    is_B_vert = (DirectionalArrowsChecker._VERTICAL_ANGLE_MIN <= angle2 <= DirectionalArrowsChecker._VERTICAL_ANGLE_MAX)
-
-                    cv2.line(result_img, tuple(lineA[:2]), tuple(lineA[2:]), (0, 255, 0), 2)
-                    cv2.line(result_img, tuple(lineB[:2]), tuple(lineB[2:]), (0, 255, 0), 2)
-                    
-                    if not ((is_A_horz and is_B_vert) or (is_A_vert and is_B_horz)):
-                        return False, "INVALID: Incorrect cross orientation", None, None
-
-                    intersection_point = DirectionalArrowsChecker._get_intersection_point(lineA, lineB)
-                    if not intersection_point:
-                        return False, "INVALID: Lines do not intersect", None, None
-                    
-                    cv2.circle(result_img, intersection_point, 7, (255, 0, 0), -1)
-
-                    # Validasi jarak
-                    distances = [np.linalg.norm(p - np.array(intersection_point)) for p in points]
-                    if not all(d >= DirectionalArrowsChecker._MIN_ENDPOINT_DISTANCE for d in distances):
-                        return False, "INVALID: Endpoint too close to center", None, None
-                            
-                    # Sukses, petakan endpoints
-                    points_arr = np.array(points)
-                    endpoints = {
-                        'left': tuple(points_arr[np.argmin(points_arr[:, 0])]),
-                        'right': tuple(points_arr[np.argmax(points_arr[:, 0])]),
-                        'top': tuple(points_arr[np.argmin(points_arr[:, 1])]),
-                        'bottom': tuple(points_arr[np.argmax(points_arr[:, 1])])
-                    }
-                    return True, "OK", intersection_point, endpoints
-        
-        return False, "INVALID: No 4-sided cross found", None, None
-
-    # =================================================================================
-    # LANGKAH 2: DETEKSI PANAH DAN CELAH (METODE LAMA, TIDAK DIUBAH)
-    # =================================================================================
-    @staticmethod
-    def detect_arrow_lines(image, result_img, endpoint, debug=False):
-        if endpoint is None: return False, [], False
-
-        h, w = image.shape[:2]
-        radius = min(h // 4, w // 4, 150)
-        
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.circle(mask, endpoint, radius, 255, -1)
-        
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        thresh = cv2.bitwise_and(thresh, thresh, mask=mask)
-        
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        significant_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= 50]
-        has_gap = len(significant_contours) > 1
-        
-        gap_color = (0, 0, 255) if has_gap else (0, 255, 0)
-        cv2.putText(result_img, "GAP" if has_gap else "NO GAP", (endpoint[0] - 40, endpoint[1] - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, gap_color, 2)
-        
-        for cnt in significant_contours:
-            cv2.drawContours(result_img, [cnt], -1, (255, 0, 255), 1)
-
-        connected_lines = []
-        for cnt in significant_contours:
-            epsilon = 0.02 * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True).reshape(-1, 2)
-            for i in range(len(approx)):
-                pt1, pt2 = tuple(approx[i]), tuple(approx[(i + 1) % len(approx)])
-                dist_to_center = min(np.hypot(pt1[0] - endpoint[0], pt1[1] - endpoint[1]),
-                                     np.hypot(pt2[0] - endpoint[0], pt2[1] - endpoint[1]))
-                if dist_to_center < 30 and np.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1]) > 15:
-                    connected_lines.append((pt1, pt2))
-        
-        if len(connected_lines) < 2: return False, [], has_gap
-
-        def get_vector(line, center):
-            p1, p2 = line
-            vec = np.array(p2) - np.array(p1)
-            return vec if np.linalg.norm(np.array(p1) - center) < np.linalg.norm(np.array(p2) - center) else -vec
-
-        arrow_lines = set()
-        for line1, line2 in itertools.combinations(connected_lines, 2):
-            v1, v2 = get_vector(line1, endpoint), get_vector(line2, endpoint)
-            if np.linalg.norm(v1) > 0 and np.linalg.norm(v2) > 0:
-                cosine_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
-                angle = np.degrees(np.arccos(np.clip(cosine_angle, -1.0, 1.0)))
-                if 20 <= angle <= 90:
-                    arrow_lines.add(line1)
-                    arrow_lines.add(line2)
-        
-        return len(arrow_lines) >= 2, list(arrow_lines), has_gap
-
-    # =================================================================================
-    # FUNGSI UTAMA (CHECK)
-    # =================================================================================
-    @staticmethod
-    def check(image_path, debug=False):
+    @classmethod
+    def check(cls, image_path):
+        C = cls
         try:
-            image_color = cv2.imread(image_path)
-            if image_color is None:
-                error_img = np.zeros((300, 300, 3), dtype=np.uint8)
-                cv2.putText(error_img, "Image not found", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                return 0, error_img
-            
-            original_height, original_width = image_color.shape[:2]
-            if max(original_height, original_width) > DirectionalArrowsChecker._MAX_DIMENSION:
-                scale = DirectionalArrowsChecker._MAX_DIMENSION / max(original_height, original_width)
-                image_color = cv2.resize(image_color, (0,0), fx=scale, fy=scale)
-            
-            result_img = image_color.copy()
-
-            # LANGKAH 1: Panggil detektor cross yang baru dan kokoh
-            cross_detected, status_text, intersection_point, endpoints = DirectionalArrowsChecker._find_central_cross(image_color, result_img)
-            
-            any_gap_detected = False
-            if cross_detected:
-                # LANGKAH 2: Jika cross ditemukan, periksa setiap ujung untuk panah dan celah
-                for direction, point in endpoints.items():
-                    if point:
-                        has_arrow, lines, has_gap = DirectionalArrowsChecker.detect_arrow_lines(
-                            image_color, result_img, point, debug
-                        )
-                        if has_gap: any_gap_detected = True
-                        if has_arrow:
-                            for p1, p2 in lines:
-                                cv2.line(result_img, p1, p2, (0, 255, 0), 2)
-                            cv2.circle(result_img, point, 8, (0, 255, 255), -1)
-
-            # LANGKAH 3: Tentukan status akhir
-            if cross_detected and not any_gap_detected:
-                final_valid = True
-                summary_text = "VALID: Directional Arrows detected"
-                summary_color = (0, 255, 0)
-            elif cross_detected and any_gap_detected:
-                final_valid = False
-                summary_text = "INVALID: Gap detected"
-                summary_color = (0, 0, 255)
-            else:
-                final_valid = False
-                summary_text = status_text  # Gunakan status dari detektor cross
-                summary_color = (0, 0, 255)
-            
-            cv2.putText(result_img, summary_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, summary_color, 2)
-            
-            return 1 if final_valid else 0, result_img
-
+            img = G.load(image_path)
+            d = G.Drawing(img)
         except Exception as e:
-            print(f"Detection error: {e}")
-            traceback.print_exc()
-            error_img = np.zeros((300, 300, 3), dtype=np.uint8)
-            cv2.putText(error_img, f"Error: {str(e)}", (30, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            return 0, error_img
+            return G.error_result(C, str(e), 5)
+        vis = img.copy()
+        sts, shafts, p = C._shafts(d)
+        legs = (G.legs_at(shafts[0], p) + G.legs_at(shafts[1], p)) if (p is not None and len(shafts) == 2) else []
+        S = d.size
+        heads = [[] for _ in legs]
+        strays = []
+        for s in sts:
+            if any(s is sh for sh in shafts) or s.length < 0.04 * S:
+                continue
+            best = None
+            for k, leg in enumerate(legs):
+                dn = min(G.dist(s.a, leg.tip), G.dist(s.b, leg.tip))
+                # boleh menempel di bagian ujung kaki (30% terakhir)
+                tail = leg.pts[int(len(leg.pts) * 0.7):]
+                dl = min(G.point_to_poly(s.a, tail), G.point_to_poly(s.b, tail))
+                dd = min(dn, dl)
+                if best is None or dd < best[0]:
+                    best = (dd, k)
+            if best is not None and best[0] <= C.ATTACH_REL * S:
+                heads[best[1]].append(s)
+            elif s.length >= C.STRAY_REL * S:
+                strays.append(s)
+        # goresan kepala yang melewati ujung (mis. "^" atau ")" satu goresan) → pecah di titik terdekat ujung
+        for k, leg in enumerate(legs):
+            T = leg.tip
+            new = []
+            for b in heads[k]:
+                dd = [G.dist(q, T) for q in b.pts]
+                i = min(range(len(dd)), key=dd.__getitem__)
+                n = len(b.pts)
+                if 0.15 * n < i < 0.85 * n and dd[i] <= 1.5 * C.MEET_REL * S:
+                    new += [G.Stroke(b.pts[:i + 1][::-1]), G.Stroke(b.pts[i:])]
+                else:
+                    new.append(b)
+            heads[k] = new
+        # komponen tinta: sayap yang terpisah dari batang = "melayang"
+        ncomp, lab = G.cv2.connectedComponents(d.mask, connectivity=8)
 
-# Test code
+        def comp(pt):
+            x, y = int(round(pt[0])), int(round(pt[1]))
+            y = min(max(y, 0), lab.shape[0] - 1); x = min(max(x, 0), lab.shape[1] - 1)
+            return int(lab[y, x])
+        # --- per ujung panah
+        bad1, bad2, bad3 = [], [], []
+        for k, leg in enumerate(legs):
+            T = leg.tip
+            u = G.unit((T[0] - p[0], T[1] - p[1]))
+            if not heads[k]:
+                bad1.append("ujung tanpa kepala panah")
+                bad3.append("ada ujung tanpa kepala panah")
+                d.dot(vis, T, G.RED, 10)
+                continue
+            sides, dirs, tip_ang0 = set(), [], []
+            leg_comp = max(set(comp(q) for q in leg.pts), key=lambda c: sum(comp(q) == c for q in leg.pts))
+            for b in heads[k]:
+                e, f = (b.a, b.b) if G.dist(b.a, T) <= G.dist(b.b, T) else (b.b, b.a)
+                v = G.unit((f[0] - e[0], f[1] - e[1]))
+                gap = min(G.point_to_poly(q, leg.pts) for q in b.pts[:: max(1, len(b.pts) // 15)] + [e])
+                floating = comp(b.pts[len(b.pts) // 2]) != leg_comp and gap > C.FLOAT_REL * S
+                minor = b.length < 0.10 * S     # coretan kecil (mis. batang sedikit kebablasan)
+                reversed_ = (v[0] * u[0] + v[1] * u[1] > 0.25) and not minor
+                ang = math.degrees(math.acos(max(-1, min(1, -(v[0] * u[0] + v[1] * u[1])))))
+                # ujung runcing: sayap berangkat dari titik ujung dengan sudut (bukan melengkung
+                # menyinggung seperti huruf U). Arah awal sayap diukur pada 35% panjang pertamanya.
+                bp = b.pts if G.dist(b.pts[0], T) <= G.dist(b.pts[-1], T) else b.pts[::-1]
+                v0 = G.direction_from(bp, 0.35 * b.length)
+                ang0 = math.degrees(math.acos(max(-1, min(1, -(v0[0] * u[0] + v0[1] * u[1])))))
+                straight = ang0 <= C.BLUNT_MAX
+                meet = G.dist(e, T) <= C.MEET_REL * S
+                sharp = straight and meet and C.BARB_ANGLE[0] <= ang <= C.BARB_ANGLE[1] + 10
+                if floating:
+                    bad1.append("kepala panah melayang")
+                if reversed_:
+                    bad1.append("kepala panah terbalik")
+                if minor:
+                    continue
+                if not sharp and not floating and not reversed_:
+                    bad2.append("ujung membulat/tumpul" if not straight else
+                                ("sayap tidak bertemu di ujung" if not meet else "sayap tegak lurus batang"))
+                tip_ang0.append(ang0)
+                cr = u[0] * (f[1] - T[1]) - u[1] * (f[0] - T[0])
+                sides.add(cr > 0)
+                dirs.append(v)
+                col = G.RED if (floating or reversed_) else (G.GREEN if sharp else G.ORANGE)
+                d.polyline(vis, b.pts, col, 3)
+            if tip_ang0 and sum(tip_ang0) / len(tip_ang0) > C.BLUNT_MEAN:
+                bad2.append("ujung membulat/tumpul")
+            if not dirs:
+                continue
+            mv = G.unit((sum(v[0] for v in dirs), sum(v[1] for v in dirs)))
+            dev = math.degrees(math.acos(max(-1, min(1, -(mv[0] * u[0] + mv[1] * u[1])))))
+            if dev > C.HEAD_DIR_MAX and len(sides) == 2:
+                bad3.append(f"kepala panah menyimpang {dev:.0f}° dari arah kaki")
+            d.dot(vis, T, G.BLUE, 7)
+        if strays:
+            bad3.append(f"{len(strays)} goresan lepas di luar kepala panah")
+            for s in strays:
+                d.polyline(vis, s.pts, G.RED, 3)
+        # --- 4. rasio kaki
+        if len(legs) == 4:
+            Ls = [l.length for l in legs]
+            ratio = max(Ls) / max(1e-6, min(Ls))
+            ok4, det4 = ratio <= C.MAX_LEG_RATIO, f"kaki terpanjang {ratio:.1f}× kaki terpendek"
+        else:
+            ok4, det4 = False, "kaki tidak dapat diukur"
+        # --- 5. kriteria Form 10 pada batang
+        if p is None or len(shafts) < 2:
+            ok5, det5 = False, "batang silang tidak ditemukan / tidak berpotongan"
+        else:
+            okL, detL = X.legs_long_enough(legs, d)
+            okA, detA, roles = X.hv_within(shafts, C.ANGLE_TOL)
+            ok5 = okL and okA
+            det5 = "dua garis berpotongan; " + detL + "; " + detA
+            for i, l in enumerate(shafts):
+                tgt = 0 if (roles and roles[i] == 0) else 90
+                G.draw_dirs(d, vis, [l.pts], lambda a, t=tgt: G.ang_diff(a, t) <= C.ANGLE_TOL)
+            d.dot(vis, p, G.BLUE, 8)
+        if not legs:
+            bad1.append("kepala panah tidak dapat dinilai")
+            bad2.append("kepala panah tidak dapat dinilai")
+            bad3.append("kepala panah tidak dapat dinilai")
+
+        def summ(lst, okmsg):
+            if not lst:
+                return True, okmsg
+            u = sorted(set(lst), key=lst.index)
+            return False, "; ".join(u)
+        ok1, det1 = summ(bad1, "4 kepala panah menempel & tidak terbalik")
+        ok2, det2 = summ(bad2, "semua ujung panah runcing")
+        ok3, det3 = summ(bad3, "arah keempat panah jelas")
+        crits = [G.criterion(1, ok1, det1), G.criterion(2, ok2, det2), G.criterion(3, ok3, det3),
+                 G.criterion(4, ok4, det4), G.criterion(5, ok5, det5)]
+        return G.finish(C, vis, crits, "Directional arrows")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        image_file = sys.argv[1]
-        score, result_img = DirectionalArrowsChecker.check(image_file, debug=False)
-        print(f"Final Result: {score}")
-        if result_img is not None:
-            cv2.imshow("Directional Arrows Detection", result_img)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-    else:
-        print("Usage: python directional_arrows.py <image_path>")
+    print(DirectionalArrowsChecker.check(sys.argv[1])[0], DirectionalArrowsChecker.last_criteria)

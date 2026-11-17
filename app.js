@@ -21,7 +21,7 @@ const SYMBOLS = [
   { mod: "directional_arrows", name: "Panah empat arah",          icon: "M24 6V42M6 24H42M19 11L24 6L29 11M19 37L24 42L29 37M11 19L6 24L11 29M37 19L42 24L37 29" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "7";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "8";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -509,7 +509,7 @@ async function runScoring(test, only = null) {
       break;
     }
     if (r.type === "error") { it.auto = 0; it.error = r.message; }
-    else { it.auto = r.score ? 1 : 0; it.res = r.image; it.notes = r.notes || []; it.error = r.error; it.ms = r.ms; }
+    else { it.auto = r.score ? 1 : 0; it.res = r.image; it.notes = r.notes || []; it.criteria = r.criteria || null; it.error = r.error; it.ms = r.ms; }
     await db.put(stripBusy(test));
     refreshItem(test, i);
   }
@@ -598,8 +598,8 @@ async function viewResult(main, id) {
   $("#delBtn").onclick = async () => { if (confirm(`Hapus hasil tes ${c.name}? Tindakan ini tidak bisa dibatalkan.`)) { await db.del(test.id); state.current = null; go("#/"); toast("Hasil tes dihapus."); } };
 
   // Tes yang tersimpan tapi belum selesai dinilai (mis. aplikasi ditutup) → lanjutkan
-  // atau hasil dari versi lama (gambar masih berisi tulisan) → nilai ulang agar tampilan rapi; koreksi guru tetap
-  if (!running.has(test.id) && test.items.some((it) => !it.empty && (it.auto == null || (it.res && !it.notes)))) runScoring(test);
+  // atau hasil dari versi lama (belum ada hasil per kriteria) → nilai ulang otomatis; koreksi guru tetap
+  if (!running.has(test.id) && test.items.some((it) => !it.empty && (it.auto == null || (it.res && !it.criteria)))) runScoring(test);
 }
 
 function refreshItem(test, i) {
@@ -615,10 +615,11 @@ function refreshItem(test, i) {
   else {
     const ev = evaluateCriteria(i, it);
     autoTxt = `Penilaian otomatis: <b style="color:${it.auto ? "var(--ok)" : "var(--no)"}">${it.auto ? "Benar" : "Salah"}</b>`;
-    if (ev && ev.failed) autoTxt += `<span class="why no">✗ ${ev.failed.n === "+" ? "" : "Kriteria " + ev.failed.n + ": "}${esc(ev.failed.t)}${ev.failed.why ? " (" + ev.failed.why + ")" : ""}</span>`;
-    else if (ev) {
-      const g = ev.rows.filter((r) => r.state === "guru").length;
-      autoTxt += `<span class="why ok">✓ Memenuhi ${ev.rows.length - g} kriteria manual${g ? ` · ${g} kriteria perlu dicek guru` : ""}</span>`;
+    if (ev && ev.failed) {
+      const nf = ev.rows.filter((r) => r.state === "no").length;
+      autoTxt += `<span class="why no">✗ Kriteria ${ev.failed.n}: ${esc(ev.failed.t)}${nf > 1 ? ` (+${nf - 1} kriteria lain)` : ""}</span>`;
+    } else if (ev) {
+      autoTxt += `<span class="why ok">✓ Memenuhi ${ev.rows.length === 1 ? "kriteria" : `semua ${ev.rows.length} kriteria`} manual</span>`;
     }
   }
   el.innerHTML = `
@@ -656,7 +657,7 @@ function refreshSummary(test) {
     $("#progTxt").textContent = engine.state === "ready" ? `Menilai ${done}/${N}…` : engine.text || "Menyiapkan…";
   }
   const ms = test.items.filter((i) => i.ms).map((i) => i.ms);
-  $("#tech").innerHTML = `<p>Penilaian otomatis memakai kode deteksi Python + OpenCV dari tugas akhir (dijalankan di browser lewat Pyodide).
+  $("#tech").innerHTML = `<p>Penilaian otomatis memakai checker Python + OpenCV (versi 2, mengikuti kriteria Manual VMI) yang dijalankan di browser lewat Pyodide.
     ${ms.length ? `Rata-rata ${Math.round(ms.reduce((a, b) => a + b, 0) / ms.length)} ms per simbol di perangkat ini.` : ""}</p>`;
 }
 document.addEventListener("engine", () => { if (state.current) refreshSummary(state.current); });
@@ -664,19 +665,19 @@ document.addEventListener("engine", () => { if (state.current) refreshSummary(st
 // ---------------------------------------------------------------------------
 // 10b. Kriteria Manual VMI (tampilan)
 // ---------------------------------------------------------------------------
-const STATE_LABEL = { ok: ["✓", "Terpenuhi"], no: ["✗", "Tidak terpenuhi"], na: ["–", "Tidak dinilai (berhenti di kriteria yang gagal)"], guru: ["?", "Dicek guru"] };
+const STATE_LABEL = { ok: ["✓", "Terpenuhi"], no: ["✗", "Tidak terpenuhi"], na: ["–", "Belum dinilai"], guru: ["?", "Dicek guru"] };
 function criteriaHtml(i, it, ev) {
   const C = CRITERIA[i];
   const verdict = it.auto ? '<b class="ok">VALID — memenuhi kriteria</b>' : '<b class="no">INVALID — tidak memenuhi kriteria</b>';
   const rows = ev.rows.map((r) => `<li class="crit ${r.state}" title="${STATE_LABEL[r.state][1]}">
       <span class="mk" aria-label="${STATE_LABEL[r.state][1]}">${STATE_LABEL[r.state][0]}</span>
-      <span>${r.n === "+" ? "" : r.n + ". "}${esc(r.t)}${r.state === "guru" ? ' <em>(dicek guru)</em>' : ""}</span></li>`).join("");
-  const meas = (it.notes || []).filter((t) => !/\bVALID\b|\bINVALID\b|^Status|^Reason/i.test(t));
+      <span>${r.n}. ${esc(r.t)}${r.detail ? `<small class="crit-det">${esc(r.detail)}</small>` : ""}</span></li>`).join("");
+  const meas = (it.notes || []).filter((t) => !/\bVALID\b|\bINVALID\b|^Status|^Reason|^K\d+:/i.test(t));
   return `<div class="cap-head">${verdict}<span class="cap-form">${esc(C.form)}</span></div>
     <ul class="crit-list">${rows}</ul>
-    ${ev.rows.some((r) => r.state === "na") ? '<p class="na-note">– = tidak dinilai lebih lanjut, karena program berhenti di kriteria yang gagal</p>' : ""}
-    ${meas.length || ev.status ? `<details class="meas"><summary>Detail pengukuran program</summary>
-      <div>${[...(it.notes || [])].map((t) => `<span>${esc(t)}</span>`).join("")}</div></details>` : ""}`;
+    ${ev.rows.some((r) => r.state === "na") ? '<p class="na-note">– = hasil versi lama, tekan "Nilai ulang otomatis" untuk penilaian per kriteria</p>' : ""}
+    ${meas.length ? `<details class="meas"><summary>Detail pengukuran program</summary>
+      <div>${meas.map((t) => `<span>${esc(t)}</span>`).join("")}</div></details>` : ""}`;
 }
 
 async function viewCriteria(main) {
@@ -688,8 +689,7 @@ async function viewCriteria(main) {
         <i>Summary Scoring</i>). Skor tiap simbol <b>1</b> bila semua kriteria terpenuhi, <b>0</b> bila ada yang tidak.
         Aturan umum manual: <b>"Jangan menilai terlalu ketat — jika ragu, beri skor lulus."</b></p>
       <div class="legend">
-        <span><span class="tag auto">Dicek program</span> diperiksa otomatis oleh aplikasi</span>
-        <span><span class="tag guru">Dicek guru</span> belum dicek program, mohon dinilai guru saat koreksi</span>
+        <span><span class="tag auto">Dicek program</span> semua kriteria diperiksa otomatis; guru tetap bisa mengoreksi hasil akhirnya</span>
       </div>
     </section>
     <div class="crit-docs">
@@ -704,7 +704,6 @@ async function viewCriteria(main) {
           ${C.items.map((c) => `<li><span>${esc(c.t)}</span>
             <span class="tag ${c.auto ? "auto" : "guru"}">${c.auto ? "Dicek program" : "Dicek guru"}</span>
             <small class="en">${esc(c.en)}</small></li>`).join("")}
-          ${C.extra ? `<li class="extra"><span>${esc(C.extra.t)}</span><span class="tag auto">Dicek program</span></li>` : ""}
         </ol>
         <p class="how small"><b>Cara program memeriksa:</b> ${esc(C.how)}</p>
       </article>`; }).join("")}

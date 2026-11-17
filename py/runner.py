@@ -42,6 +42,7 @@ def _clean_notes(drawn, result):
 
 def run(module_name, image_path):
     log = io.StringIO()
+    cls = None
 
     drawn = []  # (gambar tujuan, teks)
 
@@ -67,14 +68,22 @@ def run(module_name, image_path):
         cv2.putText = _real_putText
 
     notes = _clean_notes(drawn, result)
+    criteria = None
+    try:
+        crit = getattr(cls, "last_criteria", None)
+        if crit and err is None:
+            criteria = [dict(c) for c in crit]
+    except Exception:
+        pass
 
     # Checker yang gagal membuat kanvas hitam berisi pesan error → tampilkan foto aslinya saja
-    if result is None or (err is None and score == 0 and result.max() == 0):
+    if result is None or (err is None and score == 0 and float(result.std()) < 1.0):
         result = cv2.imread(image_path)
     return json.dumps({
         "score": int(score),
         "image": _encode(result) if result is not None else None,
         "notes": notes[:12],
+        "criteria": criteria,
         "error": err,
         "log": log.getvalue()[-1500:],
     })

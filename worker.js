@@ -5,7 +5,7 @@ import { loadPyodide } from "./pyodide/pyodide.mjs";
 // jadi tidak bergantung pada CDN luar yang kadang diblokir jaringan sekolah.
 const PYODIDE_BASE = new URL("pyodide/", self.location.href).href;
 const SYMBOL_FILES = [
-  "__init__", "vertical_line", "horizontal_line", "circle", "cross",
+  "__init__", "_vmi_geom", "_cross", "_oblique", "vertical_line", "horizontal_line", "circle", "cross",
   "right_oblique", "square", "left_oblique", "oblique_cross", "triangle",
   "open_square_circle", "three_line_cross", "directional_arrows",
 ];

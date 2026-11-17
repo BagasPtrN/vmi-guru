@@ -1,276 +1,206 @@
+"""Form 16 — Persegi terbuka dan lingkaran (Open Square and Circle).
+Kriteria manual:
+  1. Celah atau tumpang-tindih antar-bentuk tidak lebih dari 1/16 inci.
+  2. Tidak ada distorsi berat pada lingkaran atau persegi terbuka.
+  3. Tinggi lingkaran dan persegi dalam perbandingan 2 : 1.
+  4. Garis bagi lingkaran yang melewati sudut persegi harus masuk ke dalam persegi.
+"""
+import sys
+import math
 import cv2
 import numpy as np
-import math
-import sys
+from symbols import _vmi_geom as G
+
 
 class OpenSquareCircleChecker:
-    """
-    Kelas statis untuk mendeteksi dan memvalidasi keberadaan kombinasi
-    objek "lingkaran" dan "kotak terbuka" (bentuk U) dalam sebuah gambar.
-    """
-    # =================================================================================
-    # 1. KONSTANTA UNTUK PARAMETER DETEKSI
-    # =================================================================================
-    # Parameter Umum
-    _MAX_DIMENSION = 1000
-
-    # Parameter Deteksi Lingkaran
-    _CIRCLE_MIN_ABS_CONTOUR_AREA = 300
-    _CIRCLE_MIN_ABS_DIMENSION = 20
-    _CIRCLE_MAX_ASPECT_RATIO = 2.5
-    _CIRCLE_MIN_CIRCULARITY = 0.35
-    _CIRCLE_MIN_ANGULAR_COVERAGE = 0.65
-    _CIRCLE_PREPROC_KERNEL = (7, 7)
-
-    # Parameter Deteksi Kotak Terbuka
-    _SQUARE_APPROX_FACTOR = 0.015
-
-    # =================================================================================
-    # 2. FUNGSI METRIK UNTUK ANALISIS BENTUK
-    # =================================================================================
-    @staticmethod
-    def calculate_aspect_ratio(width, height):
-        """Menghitung rasio aspek dari bounding box."""
-        if min(width, height) == 0: return 0
-        return max(width, height) / min(width, height)
+    JOIN_REL = 0.06        # 1/16 inci ≈ 6% sisi persegi (asumsi sisi persegi ±1 inci)
+    INTRUDE_MAX = 0.05     # maks 5% luas lingkaran berada di dalam kotak persegi
+    CIRCLE_MAX_RATIO = 1.8 # lingkaran tidak gepeng berat
+    SIDE_TOL = 25.0        # sisi persegi: tegak/mendatar dalam ±25°
+    HEIGHT_RATIO = 2.0
+    PROJECT_REL = 0.25     # garis bagi diperpanjang 25% sisi persegi melewati sudut
+    last_criteria = []
 
     @staticmethod
-    def calculate_circularity(contour):
-        """Menghitung sirkularitas berdasarkan perbandingan area dan perimeter."""
-        area = cv2.contourArea(contour)
-        perimeter = cv2.arcLength(contour, True)
-        if perimeter == 0: return 0
-        return (4 * np.pi * area) / (perimeter ** 2)
-
-    @staticmethod
-    def calculate_ellipse_circularity(contour):
-        """Menghitung sirkularitas berdasarkan seberapa baik kontur cocok dengan elips."""
-        if len(contour) < 5: return 0
-        try:
-            ellipse = cv2.fitEllipse(contour)
-            (cx, cy), (d1, d2), angle = ellipse
-            if min(d1, d2) == 0: return 0
-            
-            ellipse_aspect = max(d1, d2) / min(d1, d2)
-            cos_a = math.cos(math.radians(angle))
-            sin_a = math.sin(math.radians(angle))
-            mean_dist = 0
-            
-            for pt in contour:
-                dx, dy = pt[0][0] - cx, pt[0][1] - cy
-                x_rot = dx * cos_a + dy * sin_a
-                y_rot = -dx * sin_a + dy * cos_a
-                # Menghindari pembagian dengan nol jika d1 atau d2 sangat kecil
-                term1 = (x_rot ** 2) / ((d1 / 2) ** 2) if d1 > 1e-6 else 0
-                term2 = (y_rot ** 2) / ((d2 / 2) ** 2) if d2 > 1e-6 else 0
-                mean_dist += abs(1 - (term1 + term2))
-                
-            mean_dist /= len(contour)
-            return 1 / (1 + mean_dist + ellipse_aspect)
-        except cv2.error:
-            return 0
-
-    @staticmethod
-    def calculate_angular_coverage(contour):
-        """Menghitung seberapa merata titik-titik kontur mengelilingi pusatnya."""
-        if len(contour) < 5: return 0
-        try:
-            (cx, cy), _, _ = cv2.fitEllipse(contour)
-            angles = sorted(math.degrees(math.atan2(pt[0][1]-cy, pt[0][0]-cx)) % 360 for pt in contour)
-            gaps = [angles[i] - angles[i-1] for i in range(1, len(angles))]
-            gaps.append(360 - angles[-1] + angles[0]) # Celah melingkar
-            return max(0, 1 - max(gaps) / 360)
-        except cv2.error:
-            return 0
-
-    # =================================================================================
-    # 3. FUNGSI DETEKTOR BENTUK DASAR
-    # =================================================================================
-    @staticmethod
-    def detect_circles(image, output_draw):
-        """Mendeteksi semua kontur yang memenuhi kriteria lingkaran."""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.bilateralFilter(gray, 11, 75, 75)
-        edges = cv2.Canny(blurred, 30, 100)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, OpenSquareCircleChecker._CIRCLE_PREPROC_KERNEL)
-        processed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=3)
-        processed = cv2.morphologyEx(processed, cv2.MORPH_DILATE, kernel, iterations=1)
-        contours, _ = cv2.findContours(processed, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        
-        valid_circles = []
-        for cnt in [c for c in contours if cv2.contourArea(c) >= OpenSquareCircleChecker._CIRCLE_MIN_ABS_CONTOUR_AREA]:
-            x, y, w, h = cv2.boundingRect(cnt)
-            if w < OpenSquareCircleChecker._CIRCLE_MIN_ABS_DIMENSION or h < OpenSquareCircleChecker._CIRCLE_MIN_ABS_DIMENSION:
+    def _circle(d):
+        k = max(3, int(0.02 * d.size)) | 1
+        m = cv2.morphologyEx(d.mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        best = None
+        Ls = G.loops(m, min_rel=0.05)
+        for L in Ls:
+            if max(L["bbox"][2], L["bbox"][3]) < 0.15 * d.size:
                 continue
+            rw, rh = L["rw"] + d.stroke, L["rh"] + d.stroke
+            ratio = max(rw, rh) / min(rw, rh)
+            if ratio > 3.0:
+                continue
+            pts = L["cnt"].reshape(-1, 2).astype(np.float32)
+            score = L["area"] / ratio
+            if best is None or score > best[0]:
+                M = cv2.moments(L["cnt"])
+                c = (M["m10"] / M["m00"], M["m01"] / M["m00"]) if M["m00"] else L["center"]
+                x, y, w, h = L["bbox"]
+                best = (score, {"pts": pts, "c": c, "R": math.sqrt(L["area"] / math.pi) + d.stroke / 2,
+                                "ratio": ratio, "h": h + d.stroke, "w": w + d.stroke, "cnt": L["cnt"]})
+        if not best:
+            return None
+        circ = best[1]
+        # lubang lain yang hanya dipisah satu goresan (mis. garis persegi masuk ke lingkaran)
+        # digabung kembali menjadi satu lingkaran
+        region = np.zeros(m.shape, np.uint8)
+        cv2.drawContours(region, [circ["cnt"]], -1, 1, -1)
+        gapk = int(2 * d.stroke + 3) | 1
+        changed = True
+        while changed:
+            changed = False
+            grown = cv2.dilate(region, np.ones((gapk, gapk), np.uint8))
+            for L in Ls:
+                hole = np.zeros(m.shape, np.uint8)
+                cv2.drawContours(hole, [L["cnt"]], -1, 1, -1)
+                if (hole & region).any() or not (hole & grown).any():
+                    continue
+                uni = cv2.morphologyEx(region | hole, cv2.MORPH_CLOSE, np.ones((gapk, gapk), np.uint8))
+                cs, _ = cv2.findContours(uni, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                cu = max(cs, key=cv2.contourArea)
+                (_, _), (rw, rh), _ = cv2.minAreaRect(cu)
+                if max(rw, rh) / max(1, min(rw, rh)) <= 2.0:
+                    region = uni
+                    changed = True
+        cs, _ = cv2.findContours(region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        cu = max(cs, key=cv2.contourArea)
+        (cx, cy), (rw, rh), _ = cv2.minAreaRect(cu)
+        x, y, w, h = cv2.boundingRect(cu)
+        M = cv2.moments(cu)
+        A = cv2.contourArea(cu)
+        return {"pts": cu.reshape(-1, 2).astype(np.float32), "cnt": cu,
+                "c": (M["m10"] / M["m00"], M["m01"] / M["m00"]) if M["m00"] else (cx, cy),
+                "R": math.sqrt(A / math.pi) + d.stroke / 2,
+                "ratio": (max(rw, rh) + d.stroke) / (min(rw, rh) + d.stroke),
+                "h": h + d.stroke, "w": w + d.stroke}
 
-            aspect = OpenSquareCircleChecker.calculate_aspect_ratio(w, h)
-            circ = max(OpenSquareCircleChecker.calculate_circularity(cnt), OpenSquareCircleChecker.calculate_ellipse_circularity(cnt))
-            coverage = OpenSquareCircleChecker.calculate_angular_coverage(cnt)
-            
-            # Tentukan warna visualisasi berdasarkan apakah lingkaran ini valid atau tidak
-            is_valid_circle = aspect <= OpenSquareCircleChecker._CIRCLE_MAX_ASPECT_RATIO and \
-                              circ > OpenSquareCircleChecker._CIRCLE_MIN_CIRCULARITY and \
-                              coverage > OpenSquareCircleChecker._CIRCLE_MIN_ANGULAR_COVERAGE
-
-            if is_valid_circle:
-                center = (int(x + w / 2), int(y + h / 2))
-                diameter = max(w, h)
-                valid_circles.append((center, diameter))
-                
-                # Visualisasi untuk lingkaran yang valid
-                cv2.circle(output_draw, center, 7, (255, 0, 0), -1) # Titik tengah biru
-                cv2.rectangle(output_draw, (x, y), (x + w, y + h), (0, 255, 0), 2) # BBox hijau
-                cv2.putText(output_draw, "Circle", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                if len(cnt) >= 5:
-                    try:
-                        cv2.ellipse(output_draw, cv2.fitEllipse(cnt), (0, 200, 255), 2)
-                    except cv2.error: pass
-            else:
-                 # Visualisasi untuk kontur yang terdeteksi tapi tidak lolos sebagai lingkaran
-                cv2.rectangle(output_draw, (x, y), (x + w, y + h), (0, 165, 255), 1) # BBox oranye tipis
-                cv2.putText(output_draw, "Not Circle", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
-
-        return valid_circles
-
-    @staticmethod
-    def detect_open_square(image, output_draw):
-        """Mendeteksi kontur terbesar dan mencoba mengekstrak bentuk 'kotak terbuka' darinya."""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours: return None
-
-        main_contour = max(contours, key=cv2.contourArea)
-        approx = cv2.approxPolyDP(main_contour, OpenSquareCircleChecker._SQUARE_APPROX_FACTOR * cv2.arcLength(main_contour, True), True)
-        pts = [tuple(pt[0]) for pt in approx]
-        if len(pts) < 4: return None
-
-        sorted_pts = sorted(pts, key=lambda p: (p[1], p[0]))
-        tl, tr = (sorted_pts[0], sorted_pts[1]) if sorted_pts[0][0] < sorted_pts[1][0] else (sorted_pts[1], sorted_pts[0])
-        index_map = {pt: i for i, pt in enumerate(pts)}
-        
-        def neighbor(pt, offset): return pts[(index_map[pt] + offset) % len(pts)]
-
-        bl_candidates = [neighbor(tl, d) for d in (-1, 1) if neighbor(tl, d)[1] > tl[1]]
-        if not bl_candidates: return None
-        bl = max(bl_candidates, key=lambda p: p[1])
-
-        br_candidates = [neighbor(tr, d) for d in (-1, 1) if neighbor(tr, d)[1] > tr[1]]
-        if not br_candidates: return None
-        br = max(br_candidates, key=lambda p: p[1])
-        
-        cv2.line(output_draw, tr, br, (0, 255, 0), 2)
-        cv2.line(output_draw, br, bl, (0, 0, 255), 2)
-        cv2.line(output_draw, bl, tl, (255, 255, 0), 2)
-        cv2.putText(output_draw, "Open Square", (tr[0], tr[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-        return (tl, tr, br, bl)
-
-    # =================================================================================
-    # 4. FUNGSI BANTU GEOMETRI
-    # =================================================================================
-    @staticmethod
-    def draw_extended_line(output_draw, pt1, pt2, color=(255, 0, 255), thickness=2):
-        """Menggambar garis yang diperpanjang jauh melewati kedua titiknya."""
-        dx, dy = pt2[0] - pt1[0], pt2[1] - pt1[1]
-        p_start = (int(pt1[0] - dx * 1000), int(pt1[1] - dy * 1000))
-        p_end = (int(pt1[0] + dx * 1000), int(pt1[1] + dy * 1000))
-        cv2.line(output_draw, p_start, p_end, color, thickness)
-
-    @staticmethod
-    def line_segment_intersect(A, B, C, D):
-        """Memeriksa apakah segmen garis AB berpotongan dengan segmen CD."""
-        x1, y1 = A; x2, y2 = B; x3, y3 = C; x4, y4 = D
-        denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
-        if abs(denom) < 1e-10: return None
-        
-        ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom
-        ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom
-        
-        if not (0 <= ub <= 1): return None 
-        
-        return (x1 + ua * (x2 - x1), y1 + ua * (y2 - y1))
-
-    # =================================================================================
-    # 5. FUNGSI UTAMA (CHECK)
-    # =================================================================================
-    @staticmethod
-    def check(image_path, min_circle_ratio=0.5):
-        """Fungsi utama untuk menjalankan seluruh alur deteksi dan validasi."""
+    @classmethod
+    def check(cls, image_path):
+        C = cls
         try:
-            image = cv2.imread(image_path)
-            if image is None: raise FileNotFoundError(f"Gambar tidak ditemukan: {image_path}")
-
-            if max(image.shape) > OpenSquareCircleChecker._MAX_DIMENSION:
-                scale = OpenSquareCircleChecker._MAX_DIMENSION / max(image.shape)
-                image = cv2.resize(image, (int(image.shape[1] * scale), int(image.shape[0] * scale)))
-
-            canvas = image.copy()
-            circles = OpenSquareCircleChecker.detect_circles(image, canvas)
-            square = OpenSquareCircleChecker.detect_open_square(image, canvas)
-
-            is_valid, status_text, color = False, "INVALID: Combination not found", (0, 0, 255)
-            
-            # --- PERUBAHAN LOGIKA VALIDASI DIMULAI DI SINI ---
-            
-            if len(circles) > 1:
-                # ATURAN BARU: Jika terdeteksi lebih dari satu lingkaran, langsung invalid.
-                status_text = f"INVALID: More than one circle detected ({len(circles)})"
-            
-            elif len(circles) == 1 and square:
-                # Logika asli hanya berjalan jika ada TEPAT SATU lingkaran dan satu kotak.
-                circle_center, circle_diameter = circles[0]
-                tl, tr, br, bl = square
-                # Menghindari pembagian dengan nol jika kotak sangat kecil
-                square_side = math.hypot(tr[0] - tl[0], tr[1] - tl[1])
-                
-                ratio = circle_diameter / square_side if square_side > 0 else 0
-                cv2.putText(canvas, f"Circle Dia: {circle_diameter:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-                cv2.putText(canvas, f"Square Side: {square_side:.1f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-                cv2.putText(canvas, f"Ratio: {ratio:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-
-                if ratio >= min_circle_ratio:
-                    OpenSquareCircleChecker.draw_extended_line(canvas, circle_center, br)
-                    for side_p1, side_p2 in [(bl, tl), (tl, tr)]:
-                        intersect_pt = OpenSquareCircleChecker.line_segment_intersect(circle_center, br, side_p1, side_p2)
-                        if intersect_pt:
-                            is_valid, status_text, color = True, "VALID: Open Square-Circle detected", (0, 255, 0)
-                            cv2.circle(canvas, (int(intersect_pt[0]), int(intersect_pt[1])), 8, (0, 255, 255), -1)
-                            break # Hentikan pencarian setelah perpotongan ditemukan
-                    
-                    if not is_valid:
-                        status_text = "INVALID: Line does not intersect square"
-                else:
-                    status_text = "INVALID: Circle too small for square"
-            
-            elif not circles:
-                status_text = "INVALID: No circle detected"
-            
-            elif not square:
-                status_text = "INVALID: No open square detected"
-
-            # --- AKHIR PERUBAHAN LOGIKA VALIDASI ---
-            
-            cv2.putText(canvas, status_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-            return 1 if is_valid else 0, canvas
-
+            img = G.load(image_path)
+            d = G.Drawing(img)
         except Exception as e:
-            print(f"Error during check: {str(e)}")
-            error_img = np.zeros((300, 500, 3), dtype=np.uint8)
-            cv2.putText(error_img, "An error occurred", (30, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
-            cv2.putText(error_img, str(e)[:60], (30, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            return 0, error_img
+            return G.error_result(C, str(e), 4)
+        vis = img.copy()
+        circ = C._circle(d)
+        skel = [q for br in d.graph.branches for q in br.pts]
+        if circ is None:
+            for br in d.graph.branches:
+                d.polyline(vis, br.pts, G.RED, 3)
+            crits = [G.criterion(1, False, "lingkaran tidak ditemukan"),
+                     G.criterion(2, False, "lingkaran tidak ditemukan / terdistorsi"),
+                     G.criterion(3, False, "tidak dapat dinilai"), G.criterion(4, False, "tidak dapat dinilai")]
+            return G.finish(C, vis, crits, "Open square and circle")
+        c, R = circ["c"], circ["R"]
+        ring = 1.6 * d.stroke + 2
+        cnt = circ["cnt"].astype(np.float32)
+        sd = [cv2.pointPolygonTest(cnt, (float(q[0]), float(q[1])), True) for q in skel]
+        # titik di luar lingkaran (jauh dari garisnya) = persegi; di dalam (jauh dari garis) = tumpang-tindih
+        sq = [q for q, v in zip(skel, sd) if v < -(ring + d.stroke / 2)]
+        inside = [q for q, v in zip(skel, sd) if v > ring]
+        # --- persegi terbuka: sisi kiri, bawah, kanan
+        ok_sq, det_sq, corner, box = False, "persegi terbuka tidak ditemukan", None, None
+        if len(sq) >= 20:
+            xs = [q[0] for q in sq]; ys = [q[1] for q in sq]
+            x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+            w, h = x1 - x0, y1 - y0
+            side = max(w, h, 1.0)
+            # sisi-sisi persegi = ruas goresan (dipecah di sudut tajam) yang berada di luar lingkaran
+            segs = []
+            for st in G.split_sharp(G.strokes(d.graph, merge_r=max(6.0, 2.5 * d.stroke)), min_turn=50.0):
+                pts = [q for q in st.pts if cv2.pointPolygonTest(cnt, (float(q[0]), float(q[1])), True) < -(ring + d.stroke / 2)]
+                if len(pts) < 5 or G.path_length(pts) < 0.12 * d.size:
+                    continue
+                a = G.fit_angle(pts)
+                kind = "V" if G.ang_diff(a, 90) <= C.SIDE_TOL else ("H" if G.ang_diff(a, 0) <= C.SIDE_TOL else "X")
+                mx = sum(q[0] for q in pts) / len(pts); my = sum(q[1] for q in pts) / len(pts)
+                segs.append((kind, a, mx, my, pts))
+            probs = []
+            V = [s_ for s_ in segs if s_[0] == "V"]
+            H = [s_ for s_ in segs if s_[0] == "H"]
+            Xs = [s_ for s_ in segs if s_[0] == "X"]
+            if len(V) < 2 or max(v[2] for v in V) - min(v[2] for v in V) < 0.35 * w:
+                probs.append("sisi tegak kiri/kanan tidak jelas")
+            if not H:
+                probs.append("sisi bawah tidak jelas")
+            elif V and max(H, key=lambda h_: h_[3])[3] < y0 + 0.5 * h:
+                probs.append("sisi mendatar tidak berada di bawah")
+            for x_ in Xs:
+                probs.append(f"ada sisi miring {min(G.ang_diff(x_[1], 0), G.ang_diff(x_[1], 90)):.0f}°")
+            top_closed = any(h_[3] < y0 + 0.3 * h for h_ in H) and len(H) >= 2
+            if top_closed:
+                probs.append("bagian atas tertutup")
+            box = (x0, y0, x1, y1)
+            # sudut persegi tempat lingkaran menempel = titik persegi (setengah kanan-bawah) terdekat ke lingkaran
+            quad = [q for q in sq if q[0] >= x0 + 0.5 * w and q[1] >= y0 + 0.5 * h] or sq
+            corner = min(quad, key=lambda q: -cv2.pointPolygonTest(cnt, (float(q[0]), float(q[1])), True))
+            ok_sq = not probs
+            det_sq = "persegi terbuka jelas" if ok_sq else "; ".join(probs)
+        intr = 0.0
+        if box is not None:
+            reg = np.zeros(d.mask.shape, np.uint8)
+            cv2.drawContours(reg, [circ["cnt"]], -1, 1, -1)
+            bx0, by0, bx1, by1 = [int(round(v)) for v in box]
+            tot = reg.sum()
+            intr = float(reg[by0:by1 + 1, bx0:bx1 + 1].sum()) / tot if tot else 0.0
+        ok_ci = circ["ratio"] <= C.CIRCLE_MAX_RATIO
+        ok2 = ok_sq and ok_ci
+        det2 = det_sq + ("; lingkaran rasio %.1f : 1" % circ["ratio"]) + ("" if ok_ci else " (gepeng)")
+        # --- 1. celah / tumpang-tindih
+        if corner is not None and box is not None:
+            side = max(box[2] - box[0], box[3] - box[1], 1.0)
+            # kontur lingkaran = tepi DALAM goresan → kurangi tebal goresan lingkaran + setengah goresan persegi
+            sep = -cv2.pointPolygonTest(cnt, (float(corner[0]), float(corner[1])), True) - 1.5 * d.stroke
+            pen = max([cv2.pointPolygonTest(cnt, (float(q[0]), float(q[1])), True) for q in inside], default=0.0)
+            ov = max(pen, -sep, 0.0)
+            gap = max(sep, 0.0)
+            worst = max(ov, gap) / side
+            if intr > C.INTRUDE_MAX:   # lingkaran masuk ke dalam area persegi = tumpang-tindih
+                ov = max(ov, intr * side)
+                worst = max(worst, ov / side)
+            ok1 = worst <= C.JOIN_REL
+            det1 = (f"celah {gap / side * 100:.0f}%" if gap >= ov else f"tumpang-tindih {ov / side * 100:.0f}%") + \
+                   f" sisi persegi (maks {C.JOIN_REL * 100:.0f}%)"
+        else:
+            ok1, det1 = False, "sudut persegi tidak ditemukan"
+        # --- 3. tinggi
+        if box is not None:
+            sh = box[3] - box[1]
+            hr = circ["h"] / max(sh, 1.0)
+            ok3 = 1 / C.HEIGHT_RATIO <= hr <= C.HEIGHT_RATIO
+            det3 = f"tinggi lingkaran : persegi = {hr:.2f} : 1"
+        else:
+            ok3, det3 = False, "persegi tidak ditemukan"
+        # --- 4. garis bagi
+        if corner is not None and box is not None:
+            v = G.unit((corner[0] - c[0], corner[1] - c[1]))
+            side = max(box[2] - box[0], box[3] - box[1], 1.0)
+            q = (corner[0] + v[0] * C.PROJECT_REL * side, corner[1] + v[1] * C.PROJECT_REL * side)
+            mx, my = 0.08 * (box[2] - box[0]), 0.08 * (box[3] - box[1])
+            # harus benar-benar masuk ke bagian dalam persegi (bukan menyusuri sisinya)
+            ok4 = box[0] + mx <= q[0] <= box[2] - mx and box[1] + my <= q[1] <= box[3] - my
+            det4 = "garis bagi masuk ke persegi" if ok4 else "garis bagi tidak masuk ke persegi"
+            d.polyline(vis, [c, q], G.GREEN if ok4 else G.RED, 2)
+            d.dot(vis, corner, G.BLUE, 7)
+        else:
+            ok4, det4 = False, "sudut persegi tidak ditemukan"
+        # visual
+        d.polyline(vis, [tuple(p) for p in circ["pts"]] + [tuple(circ["pts"][0])], G.GREEN if ok_ci else G.RED, 3)
+        d.dot(vis, c, G.BLUE, 6)
+        if box is not None:
+            d.polyline(vis, [(box[0], box[1]), (box[0], box[3]), (box[2], box[3]), (box[2], box[1])],
+                       G.GREEN if ok_sq else G.RED, 2)
+        for q in inside:
+            d.dot(vis, q, G.ORANGE, 2)
+        crits = [G.criterion(1, ok1, det1), G.criterion(2, ok2, det2),
+                 G.criterion(3, ok3, det3), G.criterion(4, ok4, det4)]
+        return G.finish(C, vis, crits, "Open square and circle")
 
-# --- Bagian Eksekusi Kode ---
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        image_path = sys.argv[1]
-        score, result_img = OpenSquareCircleChecker.check(image_path)
-        print(f"Path: {image_path}")
-        print(f"Score: {score}")
-        if result_img is not None:
-            cv2.imshow("Open Square Circle Checker Result", result_img)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-    else:
-        print("Penggunaan: python <nama_script.py> <path_ke_gambar>")
+    print(OpenSquareCircleChecker.check(sys.argv[1])[0], OpenSquareCircleChecker.last_criteria)

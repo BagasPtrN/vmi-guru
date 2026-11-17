@@ -1,8 +1,8 @@
 /* Cache sederhana agar aplikasi & mesin penilai (±30 MB) tidak diunduh ulang. */
-const APP = "vmi-app-v5";
+const APP = "vmi-app-v6";
 const CDN = "vmi-cdn-v2";
 const SHELL = ["./", "index.html", "app.css", "app.js", "criteria.js", "worker.js", "manifest.webmanifest", "icon.svg",
-  "py/runner.py", ...["__init__", "vertical_line", "horizontal_line", "circle", "cross", "right_oblique", "square",
+  "py/runner.py", ...["__init__", "_vmi_geom", "_cross", "_oblique", "vertical_line", "horizontal_line", "circle", "cross", "right_oblique", "square",
   "left_oblique", "oblique_cross", "triangle", "open_square_circle", "three_line_cross", "directional_arrows"].map((n) => `py/symbols/${n}.py`)];
 
 self.addEventListener("install", (e) => {
