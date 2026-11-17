@@ -34,7 +34,7 @@ mendapat penilaian otomatis, lalu **mengoreksi** (Benar/Salah) sebelum skor disi
    `https://<username-github>.github.io/vmi-guru/`
 5. Buka link itu di HP guru. Di Chrome Android: menu ⋮ → **Tambahkan ke layar utama**.
 
-Pembukaan pertama mengunduh mesin penilai ±30 MB (Python + OpenCV), sebaiknya pakai Wi-Fi.
+Pembukaan pertama mengunduh mesin penilai ±27 MB (Python + OpenCV, disimpan di folder `pyodide/` repo ini), sebaiknya pakai Wi-Fi.
 Setelah itu tersimpan di cache browser.
 
 ## Struktur file
@@ -42,6 +42,7 @@ Setelah itu tersimpan di cache browser.
 index.html            halaman utama
 app.css / app.js      tampilan & alur (Bahasa Indonesia, ramah HP)
 worker.js             memuat Pyodide + OpenCV, menjalankan checker di latar belakang
+pyodide/              Pyodide 314.0.8 + wheel numpy & opencv-python (di-host sendiri, tanpa CDN)
 py/runner.py          jembatan: memanggil <Simbol>Checker.check(path) → skor + gambar hasil
 py/symbols/*.py       12 checker asli dari tugas akhir (tidak diubah)
 sample/1..12.png      contoh gambar (dari dataset Valid) untuk tombol "Coba dengan contoh"

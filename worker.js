@@ -1,6 +1,7 @@
 /* Mesin penilai: Pyodide + OpenCV menjalankan kode Python asli di browser. */
-const PYODIDE_VERSION = "314.0.8";
-const PYODIDE_BASE = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+// Pyodide 314.0.8 (Python 3.14 + numpy + OpenCV 4.11) disimpan di repo ini sendiri (folder pyodide/),
+// jadi tidak bergantung pada CDN luar yang kadang diblokir jaringan sekolah.
+const PYODIDE_BASE = new URL("pyodide/", self.location.href).href;
 const SYMBOL_FILES = [
   "__init__", "vertical_line", "horizontal_line", "circle", "cross",
   "right_oblique", "square", "left_oblique", "oblique_cross", "triangle",
