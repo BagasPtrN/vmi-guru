@@ -21,7 +21,7 @@ const SYMBOLS = [
   { mod: "directional_arrows", name: "Panah empat arah",          icon: "M24 6V42M6 24H42M19 11L24 6L29 11M19 37L24 42L29 37M11 19L6 24L11 29M37 19L42 24L37 29" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "6";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "7";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -246,6 +246,7 @@ async function route() {
   const old = $(".actionbar"); old && old.remove();
   if (h.startsWith("#/baru")) await viewNew(main);
   else if (h.startsWith("#/hasil/")) await viewResult(main, h.split("/")[2]);
+  else if (h.startsWith("#/kriteria")) await viewCriteria(main);
   else await viewHome(main);
   window.scrollTo(0, 0);
   main.focus({ preventScroll: true });
@@ -283,6 +284,12 @@ async function viewHome(main) {
       <div class="step"><b>2</b><p>Foto tiap gambar (bisa dari galeri)</p></div>
       <div class="step"><b>3</b><p>Periksa hasil &amp; koreksi bila perlu</p></div>
     </div>
+
+    <a class="card doc-link" href="#/kriteria">
+      <span class="crit-ic">${icon("M12 8h24v32H12zM18 16h12M18 23h12M18 30h8")}</span>
+      <span class="grow"><b>Kriteria penilaian (acuan)</b><small>Syarat lulus tiap simbol menurut Manual VMI</small></span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+    </a>
 
     <section class="section" aria-labelledby="hTitle">
       <div class="section-title">
@@ -573,7 +580,7 @@ async function viewResult(main, id) {
     const b = e.target.closest("button"); if (!b) return;
     const i = +b.closest(".res").id.slice(3), it = test.items[i];
     if (b.dataset.act === "view") {
-      viewer.open(`${i + 1}. ${SYMBOLS[i].name}`, it.res, blobUrl(it.src), it.error ? "Catatan sistem: " + it.error : "", it.notes, it.auto);
+      viewer.open(`${i + 1}. ${SYMBOLS[i].name}`, it.res, blobUrl(it.src), it.error ? "Catatan sistem: " + it.error : "", i, it);
       return;
     }
     if (b.dataset.v != null) {
@@ -605,7 +612,15 @@ function refreshItem(test, i) {
   if (it.empty) autoTxt = "Tidak difoto — dihitung tidak dikerjakan";
   else if (it.busy) autoTxt = "Sedang dinilai…";
   else if (it.auto == null) autoTxt = "Menunggu giliran…";
-  else autoTxt = `Penilaian otomatis: <b style="color:${it.auto ? "var(--ok)" : "var(--no)"}">${it.auto ? "Benar" : "Salah"}</b>${it.error ? " (gambar tidak terbaca)" : ""}`;
+  else {
+    const ev = evaluateCriteria(i, it);
+    autoTxt = `Penilaian otomatis: <b style="color:${it.auto ? "var(--ok)" : "var(--no)"}">${it.auto ? "Benar" : "Salah"}</b>`;
+    if (ev && ev.failed) autoTxt += `<span class="why no">✗ ${ev.failed.n === "+" ? "" : "Kriteria " + ev.failed.n + ": "}${esc(ev.failed.t)}${ev.failed.why ? " (" + ev.failed.why + ")" : ""}</span>`;
+    else if (ev) {
+      const g = ev.rows.filter((r) => r.state === "guru").length;
+      autoTxt += `<span class="why ok">✓ Memenuhi ${ev.rows.length - g} kriteria manual${g ? ` · ${g} kriteria perlu dicek guru` : ""}</span>`;
+    }
+  }
   el.innerHTML = `
     <button class="thumb" data-act="view" ${thumb ? "" : "disabled"} aria-label="Perbesar gambar ${esc(sym.name)}">
       ${it.busy ? '<span class="spinner" aria-hidden="true"></span>' : thumb ? `<img src="${thumb}" alt="">` : icon(sym.icon, "slot-ref")}
@@ -647,24 +662,72 @@ function refreshSummary(test) {
 document.addEventListener("engine", () => { if (state.current) refreshSummary(state.current); });
 
 // ---------------------------------------------------------------------------
+// 10b. Kriteria Manual VMI (tampilan)
+// ---------------------------------------------------------------------------
+const STATE_LABEL = { ok: ["✓", "Terpenuhi"], no: ["✗", "Tidak terpenuhi"], na: ["–", "Tidak dinilai (berhenti di kriteria yang gagal)"], guru: ["?", "Dicek guru"] };
+function criteriaHtml(i, it, ev) {
+  const C = CRITERIA[i];
+  const verdict = it.auto ? '<b class="ok">VALID — memenuhi kriteria</b>' : '<b class="no">INVALID — tidak memenuhi kriteria</b>';
+  const rows = ev.rows.map((r) => `<li class="crit ${r.state}" title="${STATE_LABEL[r.state][1]}">
+      <span class="mk" aria-label="${STATE_LABEL[r.state][1]}">${STATE_LABEL[r.state][0]}</span>
+      <span>${r.n === "+" ? "" : r.n + ". "}${esc(r.t)}${r.state === "guru" ? ' <em>(dicek guru)</em>' : ""}</span></li>`).join("");
+  const meas = (it.notes || []).filter((t) => !/\bVALID\b|\bINVALID\b|^Status|^Reason/i.test(t));
+  return `<div class="cap-head">${verdict}<span class="cap-form">${esc(C.form)}</span></div>
+    <ul class="crit-list">${rows}</ul>
+    ${ev.rows.some((r) => r.state === "na") ? '<p class="na-note">– = tidak dinilai lebih lanjut, karena program berhenti di kriteria yang gagal</p>' : ""}
+    ${meas.length || ev.status ? `<details class="meas"><summary>Detail pengukuran program</summary>
+      <div>${[...(it.notes || [])].map((t) => `<span>${esc(t)}</span>`).join("")}</div></details>` : ""}`;
+}
+
+async function viewCriteria(main) {
+  setHeader("Kriteria penilaian", "Acuan: Manual Beery VMI", true);
+  main.innerHTML = `
+    <section class="card">
+      <h2 style="font-size:20px;font-weight:800">Kriteria penilaian 12 simbol</h2>
+      <p class="muted" style="margin:8px 0 0">Diringkas dari Manual Beery VMI (Scoring Criteria, Form 4–18, dan tabel
+        <i>Summary Scoring</i>). Skor tiap simbol <b>1</b> bila semua kriteria terpenuhi, <b>0</b> bila ada yang tidak.
+        Aturan umum manual: <b>"Jangan menilai terlalu ketat — jika ragu, beri skor lulus."</b></p>
+      <div class="legend">
+        <span><span class="tag auto">Dicek program</span> diperiksa otomatis oleh aplikasi</span>
+        <span><span class="tag guru">Dicek guru</span> belum dicek program, mohon dinilai guru saat koreksi</span>
+      </div>
+    </section>
+    <div class="crit-docs">
+      ${SYMBOLS.map((s, i) => { const C = CRITERIA[i]; return `
+      <article class="card crit-card" id="k${i + 1}">
+        <header class="crit-card-head">
+          <span class="crit-ic">${icon(s.icon)}</span>
+          <div><h3>${i + 1}. ${esc(s.name)}</h3>
+            <p class="small muted">${esc(C.form)} · norma usia ${esc(C.age)}</p></div>
+        </header>
+        <ol class="crit-ol">
+          ${C.items.map((c) => `<li><span>${esc(c.t)}</span>
+            <span class="tag ${c.auto ? "auto" : "guru"}">${c.auto ? "Dicek program" : "Dicek guru"}</span>
+            <small class="en">${esc(c.en)}</small></li>`).join("")}
+          ${C.extra ? `<li class="extra"><span>${esc(C.extra.t)}</span><span class="tag auto">Dicek program</span></li>` : ""}
+        </ol>
+        <p class="how small"><b>Cara program memeriksa:</b> ${esc(C.how)}</p>
+      </article>`; }).join("")}
+    </div>
+    <p class="hint small">Ukuran dalam inci dari manual dikonversi ke mm sebagai perkiraan. Norma usia ditulis tahun:bulan.</p>`;
+}
+
+// ---------------------------------------------------------------------------
 // 11. Penampil gambar besar
 // ---------------------------------------------------------------------------
 const viewer = {
-  open(title, res, orig, hint, notes, auto) {
+  open(title, res, orig, hint, idx, it) {
     const dlg = $("#viewDlg"), img = $("#viewImg"), a = $("#segRes"), b = $("#segOrig"), cap = $("#viewCap");
     $("#viewTitle").textContent = title; $("#viewHint").textContent = hint || "";
-    // Keterangan dari checker, seragam untuk semua simbol: pojok kiri bawah gambar hasil
-    const lines = (notes || []).map((t) => {
-      const st = /\bINVALID\b/i.test(t) ? "no" : /\bVALID\b/i.test(t) ? "ok" : "";
-      return `<span class="${st}">${esc(t)}</span>`;
-    });
-    if (!lines.length && auto != null) lines.push(`<span class="${auto ? "ok" : "no"}">${auto ? "VALID" : "INVALID"}</span>`);
-    cap.innerHTML = lines.join("");
+    // Keterangan akhir: perbandingan dengan kriteria Manual VMI (sama untuk semua simbol)
+    const ev = idx != null && it ? evaluateCriteria(idx, it) : null;
+    cap.innerHTML = ev ? criteriaHtml(idx, it, ev) : "";
+    const hasCap = !!ev;
     const show = (which) => {
       const useRes = which === "res" && res;
       img.src = useRes ? res : orig; img.alt = (useRes ? "Hasil deteksi " : "Foto asli ") + title;
       a.setAttribute("aria-selected", !!useRes); b.setAttribute("aria-selected", !useRes);
-      cap.hidden = !useRes || !lines.length;
+      cap.hidden = !hasCap;
     };
     a.disabled = !res; a.onclick = () => show("res"); b.onclick = () => show("orig");
     $(".seg", dlg).hidden = !res;

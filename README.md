@@ -37,6 +37,11 @@ mendapat penilaian otomatis, lalu **mengoreksi** (Benar/Salah) sebelum skor disi
 Pembukaan pertama mengunduh mesin penilai ±27 MB (Python + OpenCV, disimpan di folder `pyodide/` repo ini), sebaiknya pakai Wi-Fi.
 Setelah itu tersimpan di cache browser.
 
+## Kriteria penilaian
+Halaman **Kriteria penilaian (acuan)** di aplikasi berisi syarat lulus tiap simbol menurut Manual Beery VMI
+(Form 4–18, hlm. 8–19 + *Summary Scoring* hlm. 32), dengan tanda mana yang **dicek program** dan mana yang **dicek guru**.
+Setelah penilaian, tiap gambar menampilkan kriteria mana yang terpenuhi/gagal (data di `criteria.js`).
+
 ## Struktur file
 ```
 index.html            halaman utama
