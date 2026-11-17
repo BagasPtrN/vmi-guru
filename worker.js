@@ -1,4 +1,6 @@
-/* Mesin penilai: Pyodide + OpenCV menjalankan kode Python asli di browser. */
+/* Mesin penilai: Pyodide + OpenCV menjalankan kode Python asli di browser.
+ * Dijalankan sebagai module worker (Pyodide 314 tidak mendukung classic worker). */
+import { loadPyodide } from "./pyodide/pyodide.mjs";
 // Pyodide 314.0.8 (Python 3.14 + numpy + OpenCV 4.11) disimpan di repo ini sendiri (folder pyodide/),
 // jadi tidak bergantung pada CDN luar yang kadang diblokir jaringan sekolah.
 const PYODIDE_BASE = new URL("pyodide/", self.location.href).href;
@@ -8,7 +10,7 @@ const SYMBOL_FILES = [
   "open_square_circle", "three_line_cross", "directional_arrows",
 ];
 
-importScripts(PYODIDE_BASE + "pyodide.js");
+
 
 let ready = null;
 let runFn = null;

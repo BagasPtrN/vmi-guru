@@ -50,9 +50,12 @@ sw.js, manifest       agar bisa offline & dipasang di layar utama
 ```
 
 ## Catatan teknis
-- Pyodide v314.0.8 membawa `opencv-python 4.11.0.86` (sama dengan versi yang dipakai saat uji).
+- Pyodide 314.0.8 (dijalankan sebagai *module worker*) membawa `opencv-python 4.11.0.86` (sama dengan versi yang dipakai saat uji).
   Checker **tidak cocok dengan OpenCV 5** (bentuk keluaran `HoughLinesP` berubah), jadi versi Pyodide dikunci.
 - Gambar dikecilkan ke maks. 1000 px sebelum dinilai (sama dengan `_MAX_DIMENSION` di checker).
+- Uji paritas di browser (Chrome, mesin web ini) atas 182 gambar dataset memberi hasil yang sama dengan Python di komputer.
+  Satu-satunya selisih ada di `three_line_cross`, yang memakai RANSAC acak (`random` tanpa seed) — di komputer pun
+  hasilnya kadang berubah antar-jalan (mis. `Valid/k/5.png` dan `7.png`).
 - Uji ulang dataset dengan OpenCV 4.11: `Valid` 91/91 dinilai benar; `Invalid` 83/91 dinilai salah
   (8 lolos: cross 2, oblique cross 1, open square circle 2, three line cross 3) — karena itu guru tetap memeriksa.
 - Skor yang ditampilkan adalah **skor mentah (raw score) 0–12**, sama seperti aplikasi asli.

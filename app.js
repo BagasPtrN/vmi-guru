@@ -76,7 +76,7 @@ const engine = {
   worker: null, state: "idle", pending: new Map(), seq: 0,
   start() {
     if (this.worker) return;
-    this.worker = new Worker("worker.js");
+    this.worker = new Worker("worker.js", { type: "module" });
     this.setState("loading", "Menyiapkan mesin…");
     this.worker.onmessage = (e) => {
       const m = e.data;
