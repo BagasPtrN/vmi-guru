@@ -1,9 +1,10 @@
 /* Cache sederhana agar aplikasi & mesin penilai (±30 MB) tidak diunduh ulang. */
-const APP = "vmi-app-v6";
+const APP = "vmi-app-v7";
 const CDN = "vmi-cdn-v2";
 const SHELL = ["./", "index.html", "app.css", "app.js", "criteria.js", "worker.js", "manifest.webmanifest", "icon.svg",
   "py/runner.py", ...["__init__", "_vmi_geom", "_cross", "_oblique", "vertical_line", "horizontal_line", "circle", "cross", "right_oblique", "square",
-  "left_oblique", "oblique_cross", "triangle", "open_square_circle", "three_line_cross", "directional_arrows"].map((n) => `py/symbols/${n}.py`)];
+  "left_oblique", "oblique_cross", "triangle", "open_square_circle", "three_line_cross", "directional_arrows",
+  "_diamond", "two_dimensional_rings", "six_circle_triangle", "circle_tilted_square", "vertical_diamond", "tilted_triangles", "eight_dot_circle", "wertheimer_hexagons", "horizontal_diamond", "three_dimensional_rings", "necker_cube", "tapered_box", "three_dimensional_star"].map((n) => `py/symbols/${n}.py`)];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(APP).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

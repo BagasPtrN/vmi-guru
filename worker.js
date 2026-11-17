@@ -8,6 +8,7 @@ const SYMBOL_FILES = [
   "__init__", "_vmi_geom", "_cross", "_oblique", "vertical_line", "horizontal_line", "circle", "cross",
   "right_oblique", "square", "left_oblique", "oblique_cross", "triangle",
   "open_square_circle", "three_line_cross", "directional_arrows",
+  "_diamond", "two_dimensional_rings", "six_circle_triangle", "circle_tilted_square", "vertical_diamond", "tilted_triangles", "eight_dot_circle", "wertheimer_hexagons", "horizontal_diamond", "three_dimensional_rings", "necker_cube", "tapered_box", "three_dimensional_star",
 ];
 
 

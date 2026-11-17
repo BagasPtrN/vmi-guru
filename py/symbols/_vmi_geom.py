@@ -1014,7 +1014,7 @@ def split_sharp(sts, min_turn=55.0, min_piece=4.0):
             out.append(st)
             continue
         a = np.asarray(pts, np.float32).reshape(-1, 1, 2)
-        ap = cv2.approxPolyDP(a, max(2.0, 0.03 * st.length), False).reshape(-1, 2)
+        ap = cv2.approxPolyDP(a, max(2.0, min(0.03 * st.length, 0.02 * WORK)), False).reshape(-1, 2)
         cut = []
         for i in range(1, len(ap) - 1):
             u = ap[i] - ap[i - 1]; v = ap[i + 1] - ap[i]
@@ -1034,3 +1034,149 @@ def split_sharp(sts, min_turn=55.0, min_piece=4.0):
             out.append(Stroke(pts[prev:]))
     out.sort(key=lambda s: -s.length)
     return out
+
+
+# =============================================================================
+# 11. Utilitas tambahan untuk Form 19–30
+# =============================================================================
+def components(d, min_rel_area=0.0):
+    """Komponen tinta terpisah (skala kerja): daftar dict {mask, area, bbox, center, holes}."""
+    n, lab, st, cen = cv2.connectedComponentsWithStats(d.mask, 8)
+    out = []
+    big = st[1:, cv2.CC_STAT_AREA].max() if n > 1 else 0
+    for i in range(1, n):
+        a = st[i, cv2.CC_STAT_AREA]
+        if a < max(3, min_rel_area * big):
+            continue
+        m = (lab == i).astype(np.uint8)
+        cs, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+        holes = []
+        if hier is not None:
+            for c, hh in zip(cs, hier[0]):
+                if hh[3] >= 0 and cv2.contourArea(c) >= 2:
+                    holes.append(c)
+        x, y, w, h = st[i, :4]
+        out.append({"mask": m, "area": int(a), "bbox": (x, y, w, h), "center": (float(cen[i][0]), float(cen[i][1])),
+                    "holes": holes})
+    return out
+
+
+def holes(d, close_rel=0.015, min_area_rel=0.0015):
+    """Daerah tertutup (bukaan) pada gambar: daftar dict {cnt, mask, area, center, thick}.
+    thick = perkiraan lebar daerah (2·luas/keliling) — kecil untuk 'pita' di antara garis ganda."""
+    k = max(3, int(close_rel * d.size)) | 1
+    m = cv2.morphologyEx(d.mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    cs, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    out = []
+    if hier is None:
+        return out, m
+    A0 = d.ink_w * d.ink_h
+    for c, hh in zip(cs, hier[0]):
+        if hh[3] < 0:
+            continue
+        a = cv2.contourArea(c)
+        if a < min_area_rel * A0:
+            continue
+        M = cv2.moments(c)
+        per = cv2.arcLength(c, True)
+        hm = np.zeros(m.shape, np.uint8)
+        cv2.drawContours(hm, [c], -1, 1, -1)
+        out.append({"cnt": c, "mask": hm, "area": a, "per": per,
+                    "center": (M["m10"] / M["m00"], M["m01"] / M["m00"]) if M["m00"] else tuple(c[0][0]),
+                    "thick": 2 * a / per if per else 0.0, "circ": 4 * math.pi * a / (per * per) if per else 0.0})
+    out.sort(key=lambda h: -h["area"])
+    return out, m
+
+
+def outer_contour(d, close_rel=0.015):
+    k = max(3, int(close_rel * d.size)) | 1
+    m = cv2.morphologyEx(d.mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    cs, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    return max(cs, key=cv2.contourArea) if cs else None
+
+
+def touching(maskA, maskB, gap):
+    k = max(3, int(gap)) | 1
+    return bool((cv2.dilate(maskA, np.ones((k, k), np.uint8)) & maskB).any())
+
+
+def interior_angles(V):
+    """Sudut dalam (derajat) di tiap titik sudut poligon cembung."""
+    return [180.0 - t for t in corner_turns(V)]
+
+
+def ransac_circles(pts, k, tol, iters=400, min_inl=30, seed=0, rmax=None):
+    """Cari hingga k lingkaran dari titik-titik (deterministik)."""
+    rs = np.random.RandomState(seed)
+    P_ = np.asarray(pts, np.float64)
+    out = []
+    for _ in range(k):
+        if len(P_) < min_inl:
+            break
+        best = None
+        for _ in range(iters):
+            i = rs.choice(len(P_), 3, replace=False)
+            (x1, y1), (x2, y2), (x3, y3) = P_[i]
+            dd = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2))
+            if abs(dd) < 1e-6:
+                continue
+            ux = ((x1 * x1 + y1 * y1) * (y2 - y3) + (x2 * x2 + y2 * y2) * (y3 - y1) + (x3 * x3 + y3 * y3) * (y1 - y2)) / dd
+            uy = ((x1 * x1 + y1 * y1) * (x3 - x2) + (x2 * x2 + y2 * y2) * (x1 - x3) + (x3 * x3 + y3 * y3) * (x2 - x1)) / dd
+            r = math.hypot(x1 - ux, y1 - uy)
+            if rmax is not None and r > rmax:
+                continue
+            res = np.abs(np.hypot(P_[:, 0] - ux, P_[:, 1] - uy) - r)
+            n = int((res < tol).sum())
+            if best is None or n > best[0]:
+                best = (n, ux, uy, r)
+        if best is None or best[0] < min_inl:
+            break
+        _, ux, uy, r = best
+        res = np.abs(np.hypot(P_[:, 0] - ux, P_[:, 1] - uy) - r)
+        inl = P_[res < tol]
+        ang = np.arctan2(inl[:, 1] - uy, inl[:, 0] - ux)
+        hist = np.histogram(ang, bins=36, range=(-math.pi, math.pi))[0]
+        cover = float((hist > 0).mean())
+        out.append({"c": (ux, uy), "r": r, "n": len(inl), "cover": cover, "pts": inl})
+        P_ = P_[res >= tol * 1.5]
+    return out
+
+
+def ransac_lines(pts, k, tol, iters=400, min_inl=20, seed=0):
+    rs = np.random.RandomState(seed)
+    P_ = np.asarray(pts, np.float64)
+    out = []
+    for _ in range(k):
+        if len(P_) < min_inl:
+            break
+        best = None
+        for _ in range(iters):
+            i, j = rs.choice(len(P_), 2, replace=False)
+            p, q = P_[i], P_[j]
+            dv = q - p
+            n = np.hypot(*dv)
+            if n < 5:
+                continue
+            nv = np.array([-dv[1], dv[0]]) / n
+            res = np.abs((P_ - p) @ nv)
+            c = int((res < tol).sum())
+            if best is None or c > best[0]:
+                best = (c, p, dv / n, nv)
+        if best is None or best[0] < min_inl:
+            break
+        _, p, dv, nv = best
+        res = np.abs((P_ - p) @ nv)
+        inl = P_[res < tol]
+        (cx, cy), (vx, vy) = fitted_line([tuple(q) for q in inl])
+        tproj = (inl - np.array([cx, cy])) @ np.array([vx, vy])
+        out.append({"p": (cx, cy), "v": (vx, vy), "n": len(inl), "pts": inl,
+                    "a": (cx + vx * tproj.min(), cy + vy * tproj.min()), "b": (cx + vx * tproj.max(), cy + vy * tproj.max()),
+                    "angle": math.degrees(math.atan2(vy, vx)) % 180.0})
+        P_ = P_[res >= tol * 1.5]
+    return out
+
+
+def skel_points(mask):
+    sk = skeletonize(mask)
+    ys, xs = np.nonzero(sk)
+    return list(zip(xs.astype(float), ys.astype(float)))

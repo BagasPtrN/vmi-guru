@@ -19,9 +19,21 @@ const SYMBOLS = [
   { mod: "open_square_circle", name: "Persegi terbuka + lingkaran", icon: "M7 6V27H23V6M39 34a8 8 0 1 1-16 0a8 8 0 1 1 16 0" },
   { mod: "three_line_cross",   name: "Silang tiga garis",         icon: "M7 24H41M16 9L32 39M32 9L16 39" },
   { mod: "directional_arrows", name: "Panah empat arah",          icon: "M24 6V42M6 24H42M19 11L24 6L29 11M19 37L24 42L29 37M11 19L6 24L11 29M37 19L42 24L37 29" },
+  { mod: "two_dimensional_rings", name: "Cincin dua dimensi",      icon: "M28 18a9 9 0 1 1-18 0a9 9 0 1 1 18 0M38 18a9 9 0 1 1-18 0a9 9 0 1 1 18 0M33 31a9 9 0 1 1-18 0a9 9 0 1 1 18 0" },
+  { mod: "six_circle_triangle", name: "Segitiga enam lingkaran",   icon: "M27 9a3 3 0 1 1-6 0a3 3 0 1 1 6 0M20 22a3 3 0 1 1-6 0a3 3 0 1 1 6 0M34 22a3 3 0 1 1-6 0a3 3 0 1 1 6 0M13 36a3 3 0 1 1-6 0a3 3 0 1 1 6 0M27 36a3 3 0 1 1-6 0a3 3 0 1 1 6 0M41 36a3 3 0 1 1-6 0a3 3 0 1 1 6 0" },
+  { mod: "circle_tilted_square", name: "Lingkaran + persegi miring", icon: "M22 24a8 8 0 1 1-16 0a8 8 0 1 1 16 0M22 24L32 14L42 24L32 34Z" },
+  { mod: "vertical_diamond",   name: "Belah ketupat tegak",       icon: "M24 5L35 24L24 43L13 24Z" },
+  { mod: "tilted_triangles",   name: "Segitiga miring",           icon: "M8 40L14 8L42 30ZM12 28L23 17L28 33Z" },
+  { mod: "eight_dot_circle",   name: "Lingkaran delapan titik",   icon: "M24 8h.1M35 13h.1M40 24h.1M35 35h.1M24 40h.1M13 35h.1M8 24h.1M13 13h.1" },
+  { mod: "wertheimer_hexagons", name: "Segi enam Wertheimer",     icon: "M6 18L12 10H22L26 18L22 26H12ZM22 26L26 20H36L42 28L36 36H26Z" },
+  { mod: "horizontal_diamond", name: "Belah ketupat mendatar",    icon: "M5 24L24 14L43 24L24 34Z" },
+  { mod: "three_dimensional_rings", name: "Cincin tiga dimensi",  icon: "M27 18a9 9 0 1 1-18 0a9 9 0 1 1 18 0M24 18a6 6 0 1 1-12 0a6 6 0 1 1 12 0M39 18a9 9 0 1 1-18 0a9 9 0 1 1 18 0M36 18a6 6 0 1 1-12 0a6 6 0 1 1 12 0M33 31a9 9 0 1 1-18 0a9 9 0 1 1 18 0M30 31a6 6 0 1 1-12 0a6 6 0 1 1 12 0" },
+  { mod: "necker_cube",        name: "Kubus Necker",              icon: "M8 16H32V40H8ZM16 8H40V32H16ZM8 16L16 8M32 16L40 8M8 40L16 32M32 40L40 32" },
+  { mod: "tapered_box",        name: "Kotak meruncing",           icon: "M6 10H42V38H6ZM20 20H32V28H20ZM6 10L20 20M42 10L32 20M6 38L20 28M42 38L32 28" },
+  { mod: "three_dimensional_star", name: "Bintang tiga dimensi",  icon: "M24 4L42 34H6ZM24 44L6 14H42Z" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "8";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "9";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -64,11 +76,17 @@ const db = (() => {
   };
   return {
     put: (v) => tx("readwrite", (s) => s.put(v)),
-    get: (id) => tx("readonly", (s) => s.get(id)),
+    get: (id) => tx("readonly", (s) => s.get(id)).then(padItems),
     del: (id) => tx("readwrite", (s) => s.delete(id)),
-    all: () => tx("readonly", (s) => s.getAll()),
+    all: () => tx("readonly", (s) => s.getAll()).then((a) => (a || []).map(padItems)),
   };
 })();
+
+// Tes lama (versi 12 simbol) dilengkapi slot kosong agar sama panjang dengan daftar simbol sekarang
+function padItems(t) {
+  if (t && Array.isArray(t.items)) while (t.items.length < N) t.items.push({ src: null, res: null, auto: 0, final: null, empty: true });
+  return t;
+}
 
 // ---------------------------------------------------------------------------
 // 3. Mesin penilai (Web Worker)
@@ -273,7 +291,7 @@ async function viewHome(main) {
     <section class="hero">
       ${icon("M7 24H41M16 9L32 39M32 9L16 39", "hero-art")}
       <h2>Nilai gambar anak dalam hitungan detik</h2>
-      <p>Foto 12 gambar tes VMI, aplikasi memberi penilaian awal, lalu Ibu/Bapak guru tinggal memastikan benar atau salah.</p>
+      <p>Foto gambar tes VMI (sampai 24 simbol), aplikasi memberi penilaian awal, lalu Ibu/Bapak guru tinggal memastikan benar atau salah.</p>
       <div class="row wrap">
         <a class="btn primary lg" href="#/baru">${ui.plus}${resume ? "Lanjutkan tes" : "Mulai tes baru"}</a>
         <button class="btn ghost" id="demoBtn">Coba dengan contoh</button>
@@ -322,7 +340,7 @@ async function viewHome(main) {
         <span class="avatar" aria-hidden="true">${esc((t.child.name || "?").trim().charAt(0).toUpperCase())}</span>
         <span class="who"><b>${esc(t.child.name || "Tanpa nama")}</b>
           <span>${esc(ageText(t.child))}${t.child.cls ? " · " + esc(t.child.cls) : ""} · ${fmtDate(t.child.date)}</span></span>
-        <span class="pill" aria-label="Skor ${totalOf(t)} dari ${N}">${totalOf(t)}/${N}${done < N ? "*" : ""}</span>
+        <span class="pill" aria-label="Skor ${totalOf(t)} dari ${t.items.length}">${totalOf(t)}/${t.items.length}${done < t.items.length ? "*" : ""}</span>
       </button>`;
     }).join("") || `<p class="muted">Tidak ada yang cocok.</p>`;
     list.querySelectorAll(".item").forEach((b) => (b.onclick = () => go("#/hasil/" + b.dataset.id)));
@@ -344,7 +362,7 @@ async function loadDemo(mode = "mix") {
   state.draft.child.name = DEMO_NAMES[mode] || "Contoh Anak";
   state.draft.child.ageY = "5";
   go("#/baru");
-  toast("Memuat 12 gambar contoh…");
+  toast(`Memuat ${N} gambar contoh…`);
   const blobs = await Promise.all(SYMBOLS.map((_, i) => fetch(`sample/${pick[i]}/${i + 1}.png`).then((r) => r.blob())));
   blobs.forEach((b, i) => (state.draft.slots[i].blob = b));
   if (location.hash.startsWith("#/baru")) route();
@@ -387,7 +405,7 @@ async function viewNew(main) {
     </section>
 
     <section class="section" aria-labelledby="sTitle">
-      <div class="section-title"><h2 id="sTitle">Foto 12 gambar</h2><span class="muted small" id="filledTxt"></span></div>
+      <div class="section-title"><h2 id="sTitle">Foto ${N} gambar</h2><span class="muted small" id="filledTxt"></span></div>
       <div class="notice" style="margin-bottom:12px">${ui.info}<div>Satu foto untuk satu gambar. Foto tegak lurus dari atas, cahaya terang, tanpa bayangan. Setelah memotret, geser jari untuk memilih bagian gambarnya saja.</div></div>
       <div class="row wrap" style="margin-bottom:12px">
         <button class="btn ghost" id="manyBtn">${ui.upl}Pilih banyak foto sekaligus</button>
@@ -684,7 +702,7 @@ async function viewCriteria(main) {
   setHeader("Kriteria penilaian", "Acuan: Manual Beery VMI", true);
   main.innerHTML = `
     <section class="card">
-      <h2 style="font-size:20px;font-weight:800">Kriteria penilaian 12 simbol</h2>
+      <h2 style="font-size:20px;font-weight:800">Kriteria penilaian ${N} simbol</h2>
       <p class="muted" style="margin:8px 0 0">Diringkas dari Manual Beery VMI (Scoring Criteria, Form 4–18, dan tabel
         <i>Summary Scoring</i>). Skor tiap simbol <b>1</b> bila semua kriteria terpenuhi, <b>0</b> bila ada yang tidak.
         Aturan umum manual: <b>"Jangan menilai terlalu ketat — jika ragu, beri skor lulus."</b></p>

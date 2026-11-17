@@ -1,5 +1,5 @@
-/* Kriteria penilaian 12 simbol pertama Beery VMI (Form 4–18),
- * diringkas dari Manual VMI hlm. 8–19 dan tabel "Summary Scoring" hlm. 32.
+/* Kriteria penilaian 24 simbol Beery VMI (Form 4–30),
+ * diringkas dari Manual VMI hlm. 8–31 dan tabel "Summary Scoring" hlm. 32.
  *
  * Tiap kriteria:
  *   t    : teks Bahasa Indonesia
@@ -114,7 +114,123 @@ const CRITERIA = [
       { t: "Juga memenuhi semua kriteria Form 10 (tanda tambah)", en: "Also apply all criteria for Form 10", auto: true },
     ],
     how: "Dua batang terpanjang diperiksa dengan kriteria Form 10. Di tiap ujung: sayap panah harus menyambung ke batang (tidak melayang), mengarah balik ke pusat (tidak terbalik), berangkat dari titik ujung dengan sudut (runcing, bukan membulat), kepala panah searah kakinya, tidak ada goresan lepas; kaki terpanjang ≤ 2× terpendek.",
+  },  { // 13
+    form: "Form 19", age: "6:8",
+    items: [
+      { t: "Tiga lingkaran bertumpuk membentuk 7 bukaan; bukaan segitiga di tengah terlihat", en: "Three overlapping circles forming seven openings; central triangular opening must be visible", auto: true },
+      { t: "Satu lingkaran jelas di bawah dua lainnya (sisi terbawah segitiga pusat-pusat lingkaran miring ≥ 20°)", en: "One circle clearly below the others (lowest side of triangle joining circle centers at least 20° from horizontal)", auto: true },
+    ],
+    how: "Menghitung bukaan (ruang tertutup) — harus 7 dan bukaan tengah menyentuh ≥ 3 bukaan lain; bila garis tak rapat, dicocokkan 3 lingkaran (RANSAC) dan wilayah irisannya dihitung. Titik pusat ketiga lingkaran dihubungkan; sisi segitiga terbawah harus miring ≥ 20°.",
   },
+  { // 14
+    form: "Form 20", age: "7:5",
+    items: [
+      { t: "Enam lingkaran", en: "Six circles", auto: true },
+      { t: "Garis dasar dan minimal satu sisi lain lurus (garis antara dua lingkaran ujung menyentuh lingkaran tengahnya)", en: "Base and at least one other side straight (line between end circles touches the middle circle)", auto: true },
+      { t: "Garis dasar dalam 10° dari horizontal", en: "Base within 10° of horizontal", auto: true },
+      { t: "Jarak antar-lingkaran pada satu sisi tidak lebih dari 2 : 1", en: "Spacing of circles on a side no more than 2:1", auto: true },
+    ],
+    how: "Setiap komponen bulat (berlubang atau terisi) dihitung sebagai lingkaran. Tiga lingkaran terluar = sudut segitiga; lingkaran tengah dipasangkan ke sisinya. Sisi 'lurus' bila jarak lingkaran tengah ke garis ≤ jari-jarinya; kemiringan dasar ≤ 10°; perbandingan jarak pusat ke pusat ≤ 2.",
+  },
+  { // 15
+    form: "Form 21", age: "7:11",
+    items: [
+      { t: "Persegi bersudut empat dan sebuah lingkaran", en: "Four-cornered square and a circle", auto: true },
+      { t: "Sudut-sudut berhadapan dalam 10° dari vertikal dan horizontal", en: "Opposite corners within 10° of vertical and horizontal", auto: true },
+      { t: "Persegi menyentuh lingkaran dengan sudut yang tertutup", en: "Square touches circle with closed corner", auto: true },
+      { t: `Celah atau tumpang-tindih tidak lebih dari ${MM.s}`, en: "Gap or overlap no more than 1/16″", auto: true },
+      { t: "Titik sentuh berada di 1/3 tengah lingkaran", en: "Touching point in middle third of circle", auto: true },
+      { t: "Tinggi lingkaran dan persegi tidak lebih dari 2 : 1", en: "Heights of circle and square no more than 2:1", auto: true },
+    ],
+    how: "Lingkaran = bukaan paling bulat; persegi = bukaan 4 sudut. Sumbu diagonal persegi dibandingkan dengan tegak/mendatar (≤ 10°). Sudut persegi yang paling dekat lingkaran harus tertutup, berjarak ≤ 8% tinggi persegi dari tepi lingkaran, dan jatuh di sepertiga tengah tinggi lingkaran; perbandingan tinggi ≤ 2.",
+  },
+  { // 16
+    form: "Form 22", age: "8:1",
+    items: [
+      { t: `Empat sudut yang baik (bukaan < ${MM.s})`, en: "Four good corners (openings under 1/16″)", auto: true },
+      { t: "Sumbu mendatar dalam 170°–190°", en: "Horizontal axis within 170° to 190°", auto: true },
+      { t: 'Tidak ada "telinga anjing" (garis/sudut tambahan di pojok)', en: 'No "dog ears"', auto: true },
+      { t: "Sisi terpendek minimal 2/3 sisi terpanjang", en: "Shortest side at least 2/3 of longest side", auto: true },
+      { t: "Kedua sudut lancip 60° atau kurang", en: "Both acute angles 60° or less", auto: true },
+    ],
+    how: "Bentuk tertutup diringkas jadi poligon 4 sudut (celah ujung garis ≤ 5% ukuran). Sumbu mendatar = garis antara dua sudut samping (≤ 10° dari horizontal); sudut kecil tambahan di pojok = telinga anjing; sisi terpendek/terpanjang ≥ 2/3; sudut atas & bawah ≤ 60° (+2° toleransi).",
+  },
+  { // 17
+    form: "Form 23", age: "8:11",
+    items: [
+      { t: "Dua segitiga", en: "Two triangles", auto: true },
+      { t: `Dua sudut segitiga dalam menyentuh rapi 1/3 tengah sisi luar; sudut ketiga dalam ${MM.s} dari menyentuh`, en: "Two inner corners touch middle thirds of outer sides; third within 1/16″", auto: true },
+      { t: "Sudut kiri segitiga luar 60°–120°", en: "Left angle of outer triangle 60°–120°", auto: true },
+      { t: "Sisi kanan segitiga luar miring 100° atau lebih", en: "Right side of outer triangle 100° or more", auto: true },
+    ],
+    how: "Kontur luar diringkas jadi segitiga; segitiga dalam diambil dari bukaan yang terbentuk. Tiap sudut segitiga dalam diukur jaraknya ke sisi luar (≤ 3,5% = menyentuh, ≤ 6% = hampir) dan posisinya harus di sepertiga tengah sisi; sudut kiri & kemiringan sisi kanan diukur dari titik sudut.",
+  },
+  { // 18
+    form: "Form 24", age: "9:6",
+    items: [
+      { t: "Delapan titik, lingkaran kecil, atau garis pendek", en: "Eight dots, circles or dashes", auto: true },
+      { t: "Bulat: tidak ada tiga titik berurutan yang segaris", en: "Roundness: no three consecutive dots in a straight line", auto: true },
+      { t: "Jarak terbesar antar-titik bersebelahan ≤ 2× jarak terkecil", en: "Largest gap no more than twice the smallest", auto: true },
+    ],
+    how: "Menghitung komponen terpisah (titik/coretan kecil) — harus 8. Diurutkan melingkar dari pusatnya; tiga titik berurutan dianggap segaris bila titik tengah menyimpang < 5% panjang talinya; perbandingan jarak bersebelahan ≤ 2.",
+  },
+  { // 19
+    form: "Form 25", age: "10:2",
+    items: [
+      { t: "Semua sisi tergambar (satu sudut paling tumpul boleh membulat)", en: "All sides present (one most obtuse angle may be rounded)", auto: true },
+      { t: "Tidak ada tanda kebingungan arah di sudut", en: "No directional confusion at corners", auto: true },
+      { t: "Tumpang-tindih terlihat jelas, tetapi tidak berlebihan", en: "Overlap clearly evident but not excessive", auto: true },
+    ],
+    how: "Bukaan tumpang-tindih = bukaan yang bersebelahan dengan dua bukaan besar; tiap segi enam = bukaan besar ∪ tumpang-tindih, diringkas jadi poligon (5–6 sudut). Ujung garis yang kebablasan > 7% ukuran = kebingungan arah. Luas tumpang-tindih 4%–60% dari segi enam terkecil.",
+  },
+  { // 20
+    form: "Form 26", age: "10:11",
+    items: [
+      { t: `Empat sudut yang baik (bukaan < ${MM.s})`, en: "Four good corners (openings under 1/16″)", auto: true },
+      { t: "Kedua sudut lancip 60° atau kurang", en: "Both acute angles 60° or less", auto: true },
+      { t: "Sumbu mendatar dalam 170°–190°", en: "Horizontal axis within 170° to 190°", auto: true },
+      { t: "Sisi terpendek minimal 2/3 sisi terpanjang", en: "Shortest side at least 2/3 of longest side", auto: true },
+    ],
+    how: "Sama seperti Form 22 tanpa pemeriksaan telinga anjing: poligon 4 sudut, sudut kiri & kanan ≤ 60° (+2°), sumbu mendatar ≤ 10° dari horizontal, sisi terpendek ≥ 2/3 terpanjang. (Usia norma diambil dari tabel tren manual.)",
+  },
+  { // 21
+    form: "Form 27", age: "11:2",
+    items: [
+      { t: "Tiga lingkaran bergaris ganda yang lengkap", en: "Three complete double-lined circles", auto: true },
+      { t: "Semua lingkaran saling bertumpuk", en: "All circles overlapping", auto: true },
+      { t: "Minimal satu tumpang-tindih 3-D yang bersih", en: "At least one clean 3-D overlap", auto: true },
+    ],
+    how: "Celah sempit di antara garis ganda (pita) dikumpulkan lalu dicocokkan 3 lingkaran (RANSAC) pada garis tengah pita; lengkap bila pita menutupi ≥ 60% keliling. Tiap pasang lingkaran harus berpotongan. Di titik silang, cincin yang pitanya tetap menyambung berarti lewat di atas — minimal satu persilangan begitu.",
+  },
+  { // 22
+    form: "Form 28", age: "12:8",
+    items: [
+      { t: "Jumlah bagian benar (12 rusuk)", en: "Correct number of parts", auto: true },
+      { t: "Orientasi benar (rusuk penghubung miring ke kanan-atas)", en: "Correct orientation", auto: true },
+      { t: "Tidak ada tanda kebingungan", en: "No confusion", auto: true },
+    ],
+    how: "Kerangka garis dipecah menjadi ruas lurus di setiap sudut tajam: harus 12 ruas — 4 mendatar, 4 tegak, 4 miring. Rusuk miring harus '/' (105°–165°). Coretan pendek, ujung rusuk menggantung, atau rusuk miring yang tidak menyambung ke sudut = kebingungan.",
+  },
+  { // 23
+    form: "Form 29", age: "13:2",
+    items: [
+      { t: "Bentuk luar jajaran genjang (boleh persegi)", en: "Outer form a parallelogram (square OK)", auto: true },
+      { t: "Bentuk dalam persegi panjang mendatar", en: "Inner form a horizontal rectangle", auto: true },
+      { t: "Bentuk dalam jelas bergeser ke kanan-bawah (diagonal kanan-bawah paling pendek)", en: "Inner form clearly shifted right and down", auto: true },
+      { t: "Tidak ada kebingungan atau distorsi", en: "No confusion or distortion", auto: true },
+    ],
+    how: "Kontur luar diringkas jadi 4 sudut; sisi berhadapan sejajar ≤ 12°. Bentuk dalam = bukaan yang tidak menyentuh tepi luar, harus 4 sudut, mendatar (lebar ≥ 1,15× tinggi). Diagonal dari sudut kanan-bawah paling pendek dan pusat dalam bergeser ≥ 3%. Harus ada 5 bukaan (4 trapesium + persegi) tanpa garis kebablasan.",
+  },
+  { // 24
+    form: "Form 30", age: "13:8",
+    items: [
+      { t: "Semua sudut segitiga melewati sisi segitiga lawan", en: "All corners of triangles extend beyond opposing sides", auto: true },
+      { t: "Satu segitiga yang sama ada bagian di atas dan di bawah segitiga lain", en: "One over- and one underlapping of the same triangle", auto: true },
+      { t: "Tidak ada distorsi berat", en: "No extreme distortion", auto: true },
+    ],
+    how: "Kontur luar harus punya 6 ujung lancip yang melewati sisi segitiga lawan. Garis tengah pita (garis ganda) dicocokkan menjadi 6 garis lalu dibagi ke dua segitiga. Di tiap persilangan, sisi yang pitanya menyambung = lewat di atas; satu segitiga harus punya keduanya. Sudut tiap segitiga 30°–90° dan perbandingan luas ≤ 2,2.",
+  },
+
 ];
 
 /** Hasil per kriteria untuk satu gambar (dari checker; fallback untuk hasil versi lama). */
