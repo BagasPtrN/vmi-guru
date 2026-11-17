@@ -1,5 +1,5 @@
 /* Cache sederhana agar aplikasi & mesin penilai (±30 MB) tidak diunduh ulang. */
-const APP = "vmi-app-v9";
+const APP = "vmi-app-v10";
 const CDN = "vmi-cdn-v2";
 const SHELL = ["./", "index.html", "app.css", "app.js", "criteria.js", "norms_data.js", "norms.js", "worker.js", "manifest.webmanifest", "icon.svg",
   "py/runner.py", ...["__init__", "_vmi_geom", "_cross", "_oblique", "vertical_line", "horizontal_line", "circle", "cross", "right_oblique", "square",

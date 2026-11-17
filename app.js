@@ -33,7 +33,7 @@ const SYMBOLS = [
   { mod: "three_dimensional_star", name: "Bintang tiga dimensi",  icon: "M24 4L42 34H6ZM24 44L6 14H42Z" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "11";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "12";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -276,6 +276,9 @@ function toast(msg) {
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2600);
 }
 const fmtDate = (s) => { try { return new Date(s + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return s; } };
+// Pilihan usia mengikuti batas tabel norma (min 2:0, maks 69:11)
+const AGE_MIN_Y = Math.floor(VMI_NORMS[0][0] / 12), AGE_MAX_Y = Math.floor(VMI_NORMS[VMI_NORMS.length - 1][1] / 12);
+const AGE_YEARS = Array.from({ length: AGE_MAX_Y - AGE_MIN_Y + 1 }, (_, i) => String(AGE_MIN_Y + i));
 const ageText = (c) => [c.ageY ? `${c.ageY} th` : "", c.ageM ? `${c.ageM} bln` : ""].filter(Boolean).join(" ") || "–";
 const finalOf = (it) => (it.final ?? it.auto);
 const totalOf = (t) => t.items.reduce((a, it) => a + (finalOf(it) === 1 ? 1 : 0), 0);
@@ -395,9 +398,9 @@ async function viewNew(main) {
       <div class="form-grid">
         <div class="field full"><label for="fName">Nama anak <span class="muted">(wajib)</span></label>
           <input id="fName" autocomplete="off" value="${esc(c.name)}" placeholder="mis. Aisyah Putri" required></div>
-        <div class="field"><label id="ageLbl">Usia</label>
+        <div class="field"><label id="ageLbl">Usia <span class="muted">(${AGE_MIN_Y}:0–${AGE_MAX_Y}:11)</span></label>
           <div class="age-row" role="group" aria-labelledby="ageLbl">
-            <select id="fAgeY" aria-label="Tahun">${opt(["", "2", "3", "4", "5", "6", "7", "8"], c.ageY, (v) => (v ? v + " tahun" : "Tahun"))}</select>
+            <select id="fAgeY" aria-label="Tahun">${opt(["", ...AGE_YEARS], c.ageY, (v) => (v ? v + " tahun" : "Tahun"))}</select>
             <select id="fAgeM" aria-label="Bulan">${opt(["", ...Array.from({ length: 12 }, (_, i) => String(i))], c.ageM, (v) => (v === "" ? "Bulan" : v + " bulan"))}</select>
           </div></div>
         <div class="field"><label for="fDate">Tanggal tes</label><input id="fDate" type="date" value="${esc(c.date)}"></div>
