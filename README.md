@@ -99,10 +99,24 @@ Karena itu untuk simbol 13–24 hasil otomatis sebaiknya diperlakukan sebagai **
 alasan ✓/✗ per kriteria. Bila nanti ada foto gambar anak untuk Form 19–30, ambang di konstanta tiap checker bisa
 disetel ulang dengan data itu.
 
+## Kesimpulan akhir (skor standar menurut usia)
+Mengikuti Manual Beery VMI (hlm. 23–29 & 93–96) dan tabel norma Lampiran C:
+1. **Skor mentah 0–30**: item 1–6 (mencoret/meniru) + 24 gambar (item 7–30), dihitung berurutan sampai
+   **3 kegagalan berturut-turut**. Item 1–6 otomatis diberi poin bila anak berhasil di salah satu item 7–9; bila tidak,
+   guru mencentang hasil tugas mencoret/meniru di halaman hasil.
+2. **Skor standar** (rata-rata 100, SD 15) dari tabel *Raw Scores to Standard Scores* per kelompok usia 2 bulan
+   (`norms_data.js`, usia 4:0–69:11; ditranskripsi dengan OCR ganda + cek visual + cek monoton).
+3. **Kategori** Tabel 1 manual (90–109 = rata-rata/sesuai usia), rentang ± SEM (Tabel 7),
+   persentil (kurva normal, perkiraan) dan usia perkembangan (usia saat skor mentah = skor standar 100, perkiraan).
+
+Tabel untuk usia **2:0–3:11 belum tersedia** — anak di bawah 4 tahun hanya mendapat skor mentah.
+
 ## Struktur file
 ```
 index.html            halaman utama
 app.css / app.js      tampilan & alur (Bahasa Indonesia, ramah HP)
+norms_data.js         tabel norma Lampiran C (skor mentah → skor standar)
+norms.js              skor mentah (aturan ceiling/basal), skor standar, kategori, kesimpulan
 worker.js             memuat Pyodide + OpenCV, menjalankan checker di latar belakang
 pyodide/              Pyodide 314.0.8 + wheel numpy & opencv-python (di-host sendiri, tanpa CDN)
 py/runner.py          jembatan: memanggil <Simbol>Checker.check(path) → skor + gambar hasil

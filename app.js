@@ -33,7 +33,7 @@ const SYMBOLS = [
   { mod: "three_dimensional_star", name: "Bintang tiga dimensi",  icon: "M24 4L42 34H6ZM24 44L6 14H42Z" },
 ];
 const N = SYMBOLS.length;
-const APP_V = "9";  // naikkan setiap rilis agar HP mengambil versi terbaru
+const APP_V = "10";  // naikkan setiap rilis agar HP mengambil versi terbaru
 const PROCESS_MAX = 1000;  // sama dengan _MAX_DIMENSION di checker
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -340,7 +340,8 @@ async function viewHome(main) {
         <span class="avatar" aria-hidden="true">${esc((t.child.name || "?").trim().charAt(0).toUpperCase())}</span>
         <span class="who"><b>${esc(t.child.name || "Tanpa nama")}</b>
           <span>${esc(ageText(t.child))}${t.child.cls ? " · " + esc(t.child.cls) : ""} · ${fmtDate(t.child.date)}</span></span>
-        <span class="pill" aria-label="Skor ${totalOf(t)} dari ${t.items.length}">${totalOf(t)}/${t.items.length}${done < t.items.length ? "*" : ""}</span>
+        ${(() => { const K = vmiConclusion(t); const ok = !K.pending && !K.st.error;
+          return `<span class="pill ${ok ? "tone-" + K.st.cat.tone : ""}" aria-label="${ok ? `Skor standar ${K.st.ss}, ${K.st.cat.label}` : `Skor mentah ${K.raw}`}">${ok ? `${K.st.op}${K.st.ss}<small>${esc(K.st.cat.label)}</small>` : `${K.raw}/30${done < t.items.length ? "*" : ""}`}</span>`; })()}
       </button>`;
     }).join("") || `<p class="muted">Tidak ada yang cocok.</p>`;
     list.querySelectorAll(".item").forEach((b) => (b.onclick = () => go("#/hasil/" + b.dataset.id)));
@@ -369,9 +370,10 @@ async function loadDemo(mode = "mix") {
 }
 
 function exportCsv(tests) {
-  const head = ["Nama", "Usia (th)", "Usia (bln)", "Kelas", "Tanggal", "Pemeriksa", "Skor", ...SYMBOLS.map((s, i) => `${i + 1}. ${s.name}`), "Catatan"];
-  const rows = tests.map((t) => [t.child.name, t.child.ageY, t.child.ageM, t.child.cls, t.child.date, t.child.examiner, totalOf(t),
-    ...t.items.map((it) => (finalOf(it) == null ? "" : finalOf(it))), t.notes || ""]);
+  const head = ["Nama", "Usia (th)", "Usia (bln)", "Kelas", "Tanggal", "Pemeriksa", "Skor mentah", "Skor standar", "Kategori", "Persentil", "Usia perkembangan", "Jumlah gambar benar", ...SYMBOLS.map((s, i) => `${i + 1}. ${s.name}`), "Catatan"];
+  const rows = tests.map((t) => { const K = vmiConclusion(t); const ok = !K.pending && !K.st.error; return [t.child.name, t.child.ageY, t.child.ageM, t.child.cls, t.child.date, t.child.examiner,
+    K.raw, ok ? K.st.op + K.st.ss : "", ok ? K.st.cat.label : "", ok ? K.st.pct ?? "" : "", K.ae.text, totalOf(t),
+    ...t.items.map((it) => (finalOf(it) == null ? "" : finalOf(it))), t.notes || ""]; });
   const csv = [head, ...rows].map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
@@ -535,7 +537,7 @@ async function runScoring(test, only = null) {
   await db.put(stripBusy(test));
   running.delete(test.id);
   refreshSummary(test);
-  if (!failed && location.hash === "#/hasil/" + test.id) toast(`Selesai! Skor otomatis ${test.items.reduce((a, b) => a + (b.auto || 0), 0)}/${N}. Silakan periksa.`);
+  if (!failed && location.hash === "#/hasil/" + test.id) toast("Selesai! Silakan periksa tiap gambar — kesimpulan ada di atas.");
 }
 const stripBusy = (t) => ({ ...t, items: t.items.map(({ busy, ...r }) => r) });
 
@@ -552,7 +554,7 @@ async function viewResult(main, id) {
     <div class="print-only"><h2>Laporan Tes Visual-Motor Integration (VMI)</h2><br></div>
     <section class="card" aria-labelledby="sumTitle">
       <div class="score-hero">
-        <div class="ring" id="ring" role="img"><div><span><b id="ringNum">0</b></span><span>dari ${N}</span></div></div>
+        <div class="ring" id="ring" role="img"><div><span><b id="ringNum">0</b></span><span>skor mentah<br>dari 30</span></div></div>
         <div>
           <h2 id="sumTitle">${esc(c.name)}</h2>
           <dl class="kv" style="margin-top:6px">
@@ -568,6 +570,8 @@ async function viewResult(main, id) {
         <div class="bar"><i id="progBar"></i></div><span class="small muted" id="progTxt"></span>
       </div>
     </section>
+
+    <section class="card section concl" id="concl" aria-labelledby="cTitle"></section>
 
     <section class="section" aria-labelledby="lTitle">
       <div class="section-title"><h2 id="lTitle">Hasil per gambar</h2></div>
@@ -589,6 +593,13 @@ async function viewResult(main, id) {
     </div>
     <details class="section no-print small muted"><summary>Info teknis</summary><div id="tech"></div></details>`;
 
+  $("#concl").onclick = async (e) => {
+    const b = e.target.closest("[data-early],[data-early-mode]"); if (!b) return;
+    if (b.dataset.earlyMode === "manual") test.early = vmiRawScore({ ...test, early: null }).earlyVals.slice();
+    else if (b.dataset.earlyMode === "auto") test.early = null;
+    else { const k = +b.dataset.early; test.early = (test.early || [0, 0, 0, 0, 0, 0]).slice(); test.early[k] = test.early[k] ? 0 : 1; }
+    await db.put(stripBusy(test)); refreshSummary(test);
+  };
   const resEl = $("#results");
   resEl.innerHTML = test.items.map((_, i) => `<article class="res" id="res${i}" aria-labelledby="rt${i}"></article>`).join("");
   test.items.forEach((_, i) => refreshItem(test, i));
@@ -657,17 +668,22 @@ function refreshItem(test, i) {
 
 function refreshSummary(test) {
   if (state.current !== test || !$("#ring")) return;
-  const total = totalOf(test);
   const done = test.items.filter((it) => !it.busy && finalOf(it) != null).length;
   const edited = test.items.filter((it) => it.final != null).length;
-  $("#ring").style.setProperty("--p", (total / N) * 100);
-  $("#ring").setAttribute("aria-label", `Skor ${total} dari ${N}`);
-  $("#ringNum").textContent = total;
+  const K = vmiConclusion(test);
+  $("#ring").style.setProperty("--p", (K.raw / 30) * 100);
+  $("#ring").setAttribute("aria-label", `Skor mentah ${K.raw} dari 30`);
+  $("#ringNum").textContent = K.raw;
   const pass = test.items.filter((it) => finalOf(it) === 1).length;
   $("#chips").innerHTML = `
-    <span class="chip ok">${pass} benar</span>
+    <span class="chip ok">${pass} gambar benar</span>
     <span class="chip no">${test.items.filter((it) => finalOf(it) === 0).length} salah</span>
     ${edited ? `<span class="chip warn">${edited} dikoreksi guru</span>` : ""}`;
+  $("#concl").innerHTML = conclusionHtml(test, K);
+  test.items.forEach((_, i) => {
+    const el = document.getElementById("res" + i);
+    if (el) el.classList.toggle("past-ceil", K.ceiling != null && i + 7 > K.ceiling);
+  });
   const busy = done < N;
   $("#prog").hidden = !busy;
   if (busy) {
@@ -679,6 +695,45 @@ function refreshSummary(test) {
     ${ms.length ? `Rata-rata ${Math.round(ms.reduce((a, b) => a + b, 0) / ms.length)} ms per simbol di perangkat ini.` : ""}</p>`;
 }
 document.addEventListener("engine", () => { if (state.current) refreshSummary(state.current); });
+
+function conclusionHtml(test, K) {
+  const st = K.st;
+  let main;
+  if (K.pending) main = `<p class="muted">Kesimpulan muncul setelah semua gambar selesai dinilai.</p>`;
+  else if (st.error === "usia") main = `<p class="warn-box">Usia anak belum diisi, jadi skor standar belum bisa dihitung.</p>`;
+  else if (st.error === "muda") main = `<p class="warn-box">Tabel norma untuk usia di bawah 4 tahun (2:0–3:11) belum dimasukkan ke aplikasi, jadi skor standar belum tersedia. Skor mentah tetap bisa dicatat.</p>`;
+  else if (st.error === "tua") main = `<p class="warn-box">Usia di luar tabel norma (maks. 69:11).</p>`;
+  else main = `
+      <div class="concl-grid">
+        <div class="big tone-${st.cat.tone}"><span>Skor standar</span><b>${st.op}${st.ss}</b>
+          <small>${st.op ? "di luar batas tabel" : `kemungkinan ${st.ss - st.sem}–${st.ss + st.sem} (±${st.sem})`}</small></div>
+        <div class="big tone-${st.cat.tone}"><span>Kategori</span><b class="cat">${esc(st.cat.label)}</b><small>${esc(st.cat.en)}</small></div>
+        <div class="big"><span>Persentil</span><b>${st.pct ?? "–"}</b><small>${st.pct ? `lebih baik dari ±${st.pct}% anak seusianya` : ""}</small></div>
+        <div class="big"><span>Usia perkembangan</span><b class="cat">≈ ${esc(K.ae.text)}</b><small>usia saat skor ini = rata-rata</small></div>
+      </div>
+      <p class="verdict-line tone-${K.verdict.tone}">${esc(K.verdict.text)}</p>`;
+  const early = K.earlyMode === "basal"
+    ? `<p class="small muted">Item 1–6 (mencoret & meniru) otomatis diberi poin karena anak berhasil di salah satu item 7–9.
+        <button class="linkbtn" data-early-mode="manual">Isi manual</button></p>`
+    : `<div class="early ${K.earlyMode === "perlu" && !K.pending ? "need" : ""}">
+        <p class="small">${K.earlyMode === "perlu"
+          ? "<b>Anak belum berhasil di gambar 1–3 (item 7–9).</b> Menurut manual, berikan tugas mencoret & meniru (item 1–6), lalu centang yang berhasil:"
+          : "Item 1–6 diisi guru:"}</p>
+        <div class="early-list">${EARLY_ITEMS.map((t, k) => `<button class="${K.earlyVals[k] ? "on" : ""}" data-early="${k}" aria-pressed="${!!K.earlyVals[k]}">
+          <span class="mk">${K.earlyVals[k] ? "✓" : ""}</span>${k + 1}. ${esc(t)} <small>(${EARLY_AGE[k]})</small></button>`).join("")}</div>
+        ${Array.isArray(test.early) ? `<button class="linkbtn" data-early-mode="auto">Kembalikan ke otomatis</button>` : ""}
+      </div>`;
+  const ceil = K.ceiling
+    ? `Penghitungan berhenti di item ${K.ceiling} (3 gagal berturut-turut)${K.passedAfter ? `; ${K.passedAfter} gambar benar sesudahnya tidak dihitung sesuai aturan manual` : ""}.`
+    : "Tidak ada 3 kegagalan berturut-turut — semua item dihitung.";
+  return `
+    <div class="section-title" style="margin:0 0 8px"><h2 id="cTitle">Kesimpulan akhir</h2>
+      <span class="small muted">usia ${esc(ageText(test.child))}${st.band ? ` · tabel ${fmtAge(st.band[0])}–${fmtAge(st.band[1])}` : ""}</span></div>
+    ${main}
+    <p class="small muted" style="margin-top:10px"><b>Skor mentah ${K.raw}/30</b> = item 1–6 (${K.earlyVals.reduce((a, b) => a + b, 0)}) + gambar yang benar sebelum berhenti. ${ceil}</p>
+    ${early}
+    <p class="hint small" style="margin-top:8px">Skrining, bukan diagnosis. Skor standar dari tabel norma Manual Beery VMI (Lampiran C); persentil & usia perkembangan adalah perkiraan.</p>`;
+}
 
 // ---------------------------------------------------------------------------
 // 10b. Kriteria Manual VMI (tampilan)
@@ -709,6 +764,25 @@ async function viewCriteria(main) {
       <div class="legend">
         <span><span class="tag auto">Dicek program</span> semua kriteria diperiksa otomatis; guru tetap bisa mengoreksi hasil akhirnya</span>
       </div>
+    </section>
+    <section class="card section" id="hitung">
+      <h2 style="font-size:18px;font-weight:800">Cara menghitung kesimpulan akhir</h2>
+      <ol class="calc-steps">
+        <li><b>Skor mentah (0–30).</b> Tes lengkap punya 30 item: item 1–6 mencoret & meniru, item 7–30 = 24 gambar di aplikasi ini.
+          Poin dihitung berurutan sampai anak <b>gagal 3 item berturut-turut</b>; item sesudahnya tidak dihitung.
+          Item 1–6 otomatis diberi poin bila anak berhasil di salah satu gambar 1–3 (item 7–9); bila tidak, guru memberikan tugas mencoret/meniru dan mencentangnya.</li>
+        <li><b>Skor standar.</b> Skor mentah dicocokkan dengan usia anak pada tabel norma Manual Beery VMI (Lampiran C, kelompok usia per 2 bulan).
+          Rata-rata anak seusianya = 100.</li>
+        <li><b>Kategori</b> (Tabel 1 manual):
+          <table class="cat-table"><tr><th>Skor standar</th><th>Kategori</th><th>% anak</th></tr>
+          <tr><td>&gt; 129</td><td>Sangat tinggi</td><td>2</td></tr><tr><td>120–129</td><td>Tinggi</td><td>7</td></tr>
+          <tr><td>110–119</td><td>Di atas rata-rata</td><td>16</td></tr><tr><td>90–109</td><td><b>Rata-rata (sesuai usia)</b></td><td>50</td></tr>
+          <tr><td>80–89</td><td>Di bawah rata-rata</td><td>16</td></tr><tr><td>70–79</td><td>Rendah</td><td>7</td></tr>
+          <tr><td>&lt; 70</td><td>Sangat rendah</td><td>2</td></tr></table></li>
+        <li><b>Rentang ± SEM.</b> Skor sebenarnya kira-kira ±4–6 poin dari skor yang didapat (Tabel 7 manual).</li>
+      </ol>
+      <p class="small muted">Persentil dihitung dari kurva normal dan usia perkembangan diperkirakan dari tabel yang sama (perkiraan).
+        Tabel untuk usia 2:0–3:11 belum tersedia di aplikasi.</p>
     </section>
     <div class="crit-docs">
       ${SYMBOLS.map((s, i) => { const C = CRITERIA[i]; return `
